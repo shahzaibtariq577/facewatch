@@ -11,6 +11,9 @@ export default function People() {
   const [version, setVersion] = useState(0);
   const addTo = useRef(null);
   const picker = useRef(null);
+  const personCam = useRef(null);
+  const gallery = useRef(null);
+  const camera = useRef(null);
 
   const load = () => api.people().then(setPeople).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
@@ -27,12 +30,25 @@ export default function People() {
     finally { setBusy(false); }
   };
 
+  // Photos for the new person can come from the gallery and the camera, several times.
+  const pick = (e) => {
+    const list = [...e.target.files];
+    setFiles((f) => [...f, ...list]);
+    e.target.value = "";
+  };
+
+  // Photos for an existing person.
+  const pickFor = (e) => {
+    const list = [...e.target.files];
+    if (list.length && addTo.current) run(() => api.addPhotos(addTo.current, list));
+    e.target.value = "";
+  };
+
   const submit = (e) => {
     e.preventDefault();
-    const formEl = e.target;
     run(async () => {
       const res = await api.addPerson(name, files);
-      setName(""); setFiles([]); formEl.reset();
+      setName(""); setFiles([]);
       return res;
     });
   };
@@ -40,6 +56,8 @@ export default function People() {
   const remove = (n) => {
     if (window.confirm(`Remove ${n} and all their photos?`)) run(() => api.removePerson(n));
   };
+
+  const addFor = (n, ref) => { addTo.current = n; ref.current.click(); };
 
   return (
     <section>
@@ -53,10 +71,14 @@ export default function People() {
         <label>Name
           <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} />
         </label>
-        <label>Photos
-          <input type="file" accept="image/*" multiple required
-                 onChange={(e) => setFiles(e.target.files)} />
-        </label>
+        <div className="row">
+          <button type="button" className="btn" onClick={() => gallery.current.click()}>Choose photos</button>
+          <button type="button" className="btn" onClick={() => camera.current.click()}>Take photo</button>
+        </div>
+        <span className="muted">
+          {files.length ? `${files.length} ${files.length === 1 ? "photo" : "photos"} selected` : "No photos selected yet"}
+          {files.length > 0 && <> <button type="button" className="btn" onClick={() => setFiles([])}>Clear</button></>}
+        </span>
         <button className="btn primary" disabled={busy || !name || !files.length}>
           {busy ? "Checking photos..." : "Add person"}
         </button>
@@ -70,12 +92,10 @@ export default function People() {
         </div>
       )}
 
-      <input ref={picker} type="file" accept="image/*" multiple hidden
-             onChange={(e) => {
-               const f = e.target.files;
-               if (f.length && addTo.current) run(() => api.addPhotos(addTo.current, f));
-               e.target.value = "";
-             }} />
+      <input ref={gallery} type="file" accept="image/*" multiple hidden onChange={pick} />
+      <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={pick} />
+      <input ref={picker} type="file" accept="image/*" multiple hidden onChange={pickFor} />
+      <input ref={personCam} type="file" accept="image/*" capture="environment" hidden onChange={pickFor} />
 
       <ul className="people">
         {people.length === 0 && <li className="muted empty">No people yet. Add the first person above.</li>}
@@ -83,9 +103,8 @@ export default function People() {
           <li key={p.name} className="card person">
             <img src={thumbUrl(p.name, version)} alt="" width="56" height="56" />
             <div><strong>{p.name}</strong><span className="muted">{p.photos} {p.photos === 1 ? "photo" : "photos"}</span></div>
-            <button className="btn" disabled={busy} onClick={() => { addTo.current = p.name; picker.current.click(); }}>
-              Add photos
-            </button>
+            <button className="btn" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
+            <button className="btn" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
             <button className="btn" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
           </li>
         ))}

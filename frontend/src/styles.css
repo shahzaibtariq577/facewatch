@@ -134,3 +134,28 @@ a.btn { text-decoration: none; color: inherit; display: inline-block; }
 .visits-note { margin: -6px 0 10px; font-size: 13px; }
 .tag-now { background: var(--match); color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 8px; margin-left: 6px; }
 .notes-list { margin: 6px 0; padding-left: 20px; }
+/* v7: phone layout. Paste this at the very END of styles.css */
+@media (max-width: 700px) {
+  .shell { display: block; }
+  .side { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; flex-direction: row; flex-wrap: nowrap; gap: 0; padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); }
+  .side .brand { display: none; }
+  .nav { flex: 1; justify-content: center; gap: 6px; padding: 12px 2px; font-size: 14px; }
+  .main { padding: 14px 12px calc(88px + env(safe-area-inset-bottom)); }
+  h2 { font-size: 24px; }
+  .btn { min-height: 44px; }
+  input[type=text], input:not([type]), select { min-height: 44px; font-size: 16px; }
+  .card { padding: 14px; overflow-x: auto; }
+  table { min-width: 460px; }
+  .stats .card:last-child { grid-column: 1 / -1; }
+  .stat b { font-size: 28px; }
+  .gallery { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+  .addform { flex-direction: column; align-items: stretch; }
+  .addform .row .btn { flex: 1; }
+  .person { grid-template-columns: 56px 1fr; }
+  .person .btn { grid-column: 1 / -1; }
+  .setgroup { justify-items: stretch; }
+  .setgroup input:not([type=checkbox]):not([type=radio]):not([type=range]), .setgroup select { min-width: 0; width: 100%; }
+  .range { flex-wrap: wrap; }
+  .range input { width: 100%; }
+  .head .row { width: 100%; }
+}
