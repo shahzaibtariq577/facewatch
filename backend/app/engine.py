@@ -1,0 +1,436 @@
+"""Face matching engine: YuNet finds faces, SFace compares them.
+
+Only faces are compared, so clothing and background are ignored. Scores are
+averaged over the last few frames so a single odd frame cannot raise an alert.
+
+v6: visits, "not seen" notices, Telegram alerts, photo quality check.
+"""
+import os
+import re
+import threading
+import time
+from collections import deque
+from datetime import datetime
+
+import cv2
+import numpy as np
+
+from . import notify
+from . import storage as st
+
+FRAME_WIDTH = 640     # frames are shrunk to this width for speed
+MAX_FACES = 6         # max faces scored per frame
+SMOOTH_FRAMES = 7     # scores are averaged over this many frames
+MIN_FRAMES = 3        # a face needs this many scores before it can match
+LOST_AFTER = 10       # forget a face after this many frames without it
+
+
+class StartError(Exception):
+    pass
+
+
+def face_feature(recognizer, img, face_row):
+    aligned = recognizer.alignCrop(img, face_row)
+    f = recognizer.feature(aligned).flatten()
+    return f / (np.linalg.norm(f) + 1e-9)
+
+
+def draw_tag(frame, text, x, y, color):
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
+    y0 = max(y - th - 10, 0)
+    cv2.rectangle(frame, (x, y0), (x + tw + 10, y0 + th + 10), color, -1)
+    cv2.putText(frame, text, (x + 5, y0 + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+
+
+def check_photo(img):
+    """Quality check for an uploaded reference photo.
+    Returns (usable, notes). usable is False when no face is found.
+    The blur / side-turn limits are simple rules of thumb, not exact."""
+    ih, iw = img.shape[:2]
+    det = cv2.FaceDetectorYN.create(st.model_path("yunet"), "", (iw, ih), 0.7, 0.3, 5000)
+    _, faces = det.detect(img)
+    if faces is None or len(faces) == 0:
+        return False, "no face found"
+    notes = []
+    if len(faces) > 1:
+        notes.append("more than one face (the biggest one is used)")
+    f = max(faces, key=lambda r: r[2] * r[3])
+    x, y, w, h = [int(v) for v in f[:4]]
+    if min(w, h) < 80:
+        notes.append("face is small (use a closer photo)")
+    crop = img[max(y, 0):max(y + h, 0), max(x, 0):max(x + w, 0)]
+    if crop.size:
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        if cv2.Laplacian(gray, cv2.CV_64F).var() < 40:
+            notes.append("looks blurry")
+    eye_mid = (float(f[4]) + float(f[6])) / 2
+    eye_dist = abs(float(f[6]) - float(f[4])) + 1e-6
+    if abs(float(f[8]) - eye_mid) / eye_dist > 0.35:
+        notes.append("face is turned to the side")
+    return True, "; ".join(notes)
+
+
+class Engine:
+    def __init__(self, cfg: dict):
+        self.cfg = cfg                     # shared with the API; changes apply live
+        self.people = {}                   # name -> BGR images
+        self.people_count = 0
+        self.people_dirty = True
+        self.models_ready = False
+        self.models_error = ""
+
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.running = False
+        self.state = "loading"             # loading|stopped|starting|running|reconnecting|error
+        self.note = ""
+        self.fps = 0.0
+        self.faces = 0
+        self.best = 0.0
+        self.matched = []
+        self.source = 0
+        self.source_label = ""
+
+        self.alert_seq = 0
+        self.last_alert = None
+        self.last_alert_ts = 0.0
+
+        # v6: notices (visit start, not seen, back in view), kept in memory
+        self.events = deque(maxlen=50)
+        self.event_seq = 0
+        self.last_seen = {}                # name -> time last matched
+        self.missing = set()               # names currently flagged "not seen"
+        self.started_at = time.time()
+
+        self._cond = threading.Condition()
+        self._jpeg = None
+        self._frame_id = 0
+
+    # ----------------------------------------------------------- setup
+    def load_models(self):
+        try:
+            st.ensure_models()
+            self.models_ready = True
+            self.state = "stopped"
+        except Exception as e:
+            self.state = "error"
+            self.models_error = f"Model download failed: {e}. Check the internet and restart."
+            self.note = self.models_error
+
+    def reload_people(self):
+        self.people = st.load_people()
+        self.people_count = len(self.people)
+        self.people_dirty = True
+
+    # --------------------------------------------------------- control
+    def resolve_source(self):
+        c = self.cfg
+        mode = c["source_mode"]
+        if mode == "video":
+            path = c.get("video_path", "")
+            if not path or not os.path.exists(path):
+                raise StartError("Video file not found. Set the path in Settings.")
+            return path, os.path.basename(path)
+        if mode == "network":
+            url = c.get("url", "")
+            if not url:
+                raise StartError("Type the network camera address in Settings first.")
+            return url, re.sub(r"//[^@/]*@", "//", url)      # never show passwords
+        return int(c["cam_index"]), f"Camera {int(c['cam_index'])}"
+
+    def start(self):
+        if self.running:
+            return
+        if not self.people:
+            raise StartError("Add at least one person with a clear photo first.")
+        if not self.models_ready:
+            raise StartError("The face models are still loading.")
+        self.source, self.source_label = self.resolve_source()
+        self.stop_event.clear()
+        self.running = True
+        self.state = "starting"
+        self.note = ""
+        self.last_seen, self.missing = {}, set()
+        self.started_at = time.time()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        t = self.thread
+        if t and t.is_alive():
+            t.join(timeout=3)
+        self.running = False
+        if self.state != "error":
+            self.state = "stopped"
+        self.matched, self.faces, self.fps = [], 0, 0.0
+        with self._cond:
+            self._cond.notify_all()
+
+    def status(self):
+        if self.running and self.thread and not self.thread.is_alive():
+            self.running = False
+            if self.state != "error":
+                self.state = "stopped"
+        now = time.time()
+        return {
+            "running": self.running, "state": self.state, "note": self.note,
+            "models_ready": self.models_ready, "people": self.people_count,
+            "fps": round(self.fps, 1), "faces": self.faces, "best": round(self.best, 2),
+            "matched": list(self.matched), "source": self.source_label,
+            "alert_seq": self.alert_seq, "last_alert": self.last_alert,
+            "alert_age": round(now - self.last_alert_ts, 1) if self.last_alert else None,
+            "missing": sorted(self.missing),
+            "events": list(self.events)[-8:][::-1],      # newest first
+            "event_seq": self.event_seq,
+            "notify_error": notify.last_error,
+        }
+
+    # ---------------------------------------------------------- stream
+    def frames(self):
+        """MJPEG chunks for as long as the engine runs."""
+        last = -1
+        while self.running:
+            with self._cond:
+                self._cond.wait_for(lambda: self._frame_id != last or not self.running, timeout=2)
+                jpeg, last = self._jpeg, self._frame_id
+            if jpeg is None:
+                continue
+            yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + \
+                  str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n"
+
+    def _publish(self, frame):
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ok:
+            with self._cond:
+                self._jpeg = buf.tobytes()
+                self._frame_id += 1
+                self._cond.notify_all()
+
+    # ---------------------------------------------------------- notices
+    def _event(self, kind, name, text):
+        self.events.append({"time": datetime.now().strftime(st.TIME_FMT),
+                            "kind": kind, "name": name, "text": text})
+        self.event_seq += 1
+
+    def _new_visit(self, name, score, crop):
+        """A person appeared after being away longer than the visit gap."""
+        self._event("visit", name, f"{name} arrived (score {score:.2f}).")
+        if not self.cfg.get("notify_on_match"):
+            return
+        photo = None
+        if self.cfg.get("notify_send_photo") and crop is not None and crop.size:
+            ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 88])
+            photo = buf.tobytes() if ok else None
+        stamp = datetime.now().strftime("%H:%M:%S")
+        notify.send_async(self.cfg, f"FaceWatch: {name} seen at {stamp} "
+                                    f"({self.source_label}). Score {score:.2f}.", photo)
+
+    def _went_missing(self, name, minutes):
+        self.missing.add(name)
+        self._event("missing", name, f"{name} has not been seen for {minutes} minutes.")
+        if self.cfg.get("notify_on_missing"):
+            notify.send_async(self.cfg, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
+
+    # ---------------------------------------------------------- alerts
+    def _alert(self, name, score, frame, face=None):
+        stamp = datetime.now()
+        snap = ""
+        try:
+            if self.cfg["snapshots"]:
+                os.makedirs(st.MATCH_DIR, exist_ok=True)
+                snap = f"{name}_{stamp:%Y%m%d_%H%M%S}.jpg"
+                if self.cfg.get("save_full_frame", True):
+                    st.write_image(os.path.join(st.MATCH_DIR, snap), frame, 75)
+                if face is not None and face.size:
+                    st.write_image(os.path.join(st.MATCH_DIR, st.FACE_PREFIX + snap), face, 88)
+            st.log_alert(stamp, name, score, snap, self.source_label)
+            if self.state != "error":
+                self.note = ""
+        except PermissionError:
+            self.note = "Could not write match_log.csv (is it open in Excel?)"
+        except Exception as e:
+            self.note = f"Could not save alert: {e}"
+        self.last_alert = {"name": name, "score": round(score, 2), "time": stamp.strftime(st.TIME_FMT)}
+        self.last_alert_ts = time.time()
+        self.alert_seq += 1
+
+    # ---------------------------------------------------------- worker
+    def _build_refs(self, detector, recognizer):
+        refs, problems = {}, []
+        for name, imgs in list(self.people.items()):
+            embs = []
+            for img in imgs:
+                ih, iw = img.shape[:2]
+                detector.setInputSize((iw, ih))
+                _, faces = detector.detect(img)
+                if faces is None or len(faces) == 0:
+                    continue
+                best = max(faces, key=lambda f: f[2] * f[3])
+                embs.append(face_feature(recognizer, img, best))
+            if embs:
+                refs[name] = embs
+            else:
+                problems.append(name)
+        return refs, problems
+
+    def _worker(self):
+        try:
+            detector = cv2.FaceDetectorYN.create(st.model_path("yunet"), "", (320, 320), 0.7, 0.3, 5000)
+            recognizer = cv2.FaceRecognizerSF.create(st.model_path("sface"), "")
+        except Exception as e:
+            self.state, self.note, self.running = "error", f"Could not start the face models: {e}", False
+            return
+
+        live = isinstance(self.source, int) or str(self.source).lower().startswith(("http", "rtsp", "rtmp"))
+        refs, base_note = {}, ""
+        tracks, next_id, frame_no = {}, 0, 0
+        last_alert = {}
+        prev, fps = time.time(), 0.0
+
+        while not self.stop_event.is_set():
+            cap = cv2.VideoCapture(self.source)
+            if not cap.isOpened():
+                cap.release()
+                if live and self.cfg["auto_reconnect"]:
+                    self.state, self.note = "reconnecting", "Camera not available. Retrying..."
+                    self.stop_event.wait(2.0)
+                    continue
+                self.state, self.note = "error", "Could not open the camera or video. Check Settings."
+                break
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # less delay on network cameras
+            except Exception:
+                pass
+            self.state, self.note = "running", base_note
+            self.started_at = time.time()    # "not seen" countdown restarts after a reconnect
+
+            while not self.stop_event.is_set():
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
+                h, w = frame.shape[:2]
+
+                if self.people_dirty:
+                    self.people_dirty = False
+                    tracks.clear()
+                    refs, problems = self._build_refs(detector, recognizer)
+                    base_note = ("No face found in photos of: " + ", ".join(problems)) if problems else ""
+                    self.note = base_note
+                    self.missing &= set(refs)            # forget removed people
+
+                detector.setInputSize((w, h))
+                _, faces = detector.detect(frame)
+                matched, crops, best, used, n_faces = {}, {}, 0.0, set(), 0
+                frame_no += 1
+
+                if faces is not None:
+                    faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)[:MAX_FACES]
+                    n_faces = len(faces)
+                    for face in faces:
+                        x, y, fw, fh = [int(v) for v in face[:4]]
+                        cx, cy = x + fw / 2, y + fh / 2
+
+                        # link this face to the nearest face from earlier frames
+                        tid, dist_best = None, max(fw, fh)
+                        for t_id, t in tracks.items():
+                            if t_id in used:
+                                continue
+                            d = ((t["cx"] - cx) ** 2 + (t["cy"] - cy) ** 2) ** 0.5
+                            if d < dist_best:
+                                tid, dist_best = t_id, d
+                        if tid is None:
+                            tid = next_id
+                            next_id += 1
+                            tracks[tid] = {"scores": {}}
+                        used.add(tid)
+                        t = tracks[tid]
+                        t["cx"], t["cy"], t["seen"] = cx, cy, frame_no
+
+                        if refs:
+                            try:
+                                emb = face_feature(recognizer, frame, face)
+                                for pname, embs in refs.items():
+                                    dq = t["scores"].setdefault(pname, deque(maxlen=SMOOTH_FRAMES))
+                                    dq.append(max(float(emb @ r) for r in embs))
+                            except Exception:
+                                pass
+
+                        best_name, best_avg, best_n = None, None, 0
+                        for pname, dq in t["scores"].items():
+                            if not dq or pname not in refs:
+                                continue
+                            m = sum(dq) / len(dq)
+                            if best_avg is None or m > best_avg:
+                                best_name, best_avg, best_n = pname, m, len(dq)
+
+                        is_match = (best_avg is not None and best_n >= MIN_FRAMES
+                                    and best_avg >= self.cfg["threshold"])
+                        if best_avg is not None:
+                            best = max(best, best_avg)
+                        if is_match:
+                            if best_avg >= matched.get(best_name, 0.0):
+                                # clean close-up of the face (taken before the boxes are drawn)
+                                mx, my = int(fw * 0.4), int(fh * 0.4)
+                                crops[best_name] = frame[max(y - my, 0):min(y + fh + my, h),
+                                                         max(x - mx, 0):min(x + fw + mx, w)].copy()
+                            matched[best_name] = max(matched.get(best_name, 0.0), best_avg)
+                            cv2.rectangle(frame, (x, y), (x + fw, y + fh), (94, 197, 34), 3)
+                            draw_tag(frame, f"{best_name} {best_avg:.2f}", x, y, (94, 197, 34))
+                        else:
+                            cv2.rectangle(frame, (x, y), (x + fw, y + fh), (150, 150, 150), 1)
+                            tag = f"{best_avg:.2f}" if best_avg is not None else "?"
+                            cv2.putText(frame, tag, (x, max(y - 6, 12)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (190, 190, 190), 1)
+
+                for t_id in [k for k, t in tracks.items() if frame_no - t["seen"] > LOST_AFTER]:
+                    del tracks[t_id]
+
+                now_t = time.time()
+
+                # visits: a person back after more than the gap starts a new visit
+                visit_gap = max(self.cfg.get("visit_gap", 120), 2 * self.cfg["alert_interval"])
+                for pname, score in matched.items():
+                    prev_seen = self.last_seen.get(pname)
+                    self.last_seen[pname] = now_t
+                    if pname in self.missing:
+                        self.missing.discard(pname)
+                        self._event("back", pname, f"{pname} is back in view.")
+                    if prev_seen is None or now_t - prev_seen > visit_gap:
+                        self._new_visit(pname, score, crops.get(pname))
+
+                # not-seen notice
+                minutes = self.cfg.get("not_seen_minutes", 0)
+                if minutes:
+                    for pname in refs:
+                        since = max(self.last_seen.get(pname, 0.0), self.started_at)
+                        if pname not in self.missing and now_t - since >= minutes * 60:
+                            self._went_missing(pname, minutes)
+
+                # regular alerts: again every N seconds while the person stays in view
+                for pname, score in matched.items():
+                    if now_t - last_alert.get(pname, 0) >= self.cfg["alert_interval"]:
+                        last_alert[pname] = now_t
+                        self._alert(pname, score, frame, crops.get(pname))
+
+                now = time.time()
+                fps = 0.9 * fps + 0.1 * (1 / max(now - prev, 1e-3))
+                prev = now
+                self.fps, self.faces, self.best, self.matched = fps, n_faces, best, sorted(matched)
+                self._publish(frame)
+
+            cap.release()
+            if self.stop_event.is_set():
+                break
+            if live and self.cfg["auto_reconnect"]:
+                self.state, self.note = "reconnecting", "Connection lost. Reconnecting..."
+                self.stop_event.wait(2.0)
+                continue
+            self.note = "Connection lost." if live else "Video finished."
+            break
+
+        self.matched, self.faces, self.fps = [], 0, 0.0
+        self.running = False
+        if self.state != "error":
+            self.state = "stopped"

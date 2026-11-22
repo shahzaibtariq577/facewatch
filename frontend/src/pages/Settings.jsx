@@ -1,0 +1,167 @@
+import { useEffect, useState } from "react";
+import { api } from "../api.js";
+
+const INTERVALS = [[5, "Every 5 seconds"], [10, "Every 10 seconds"], [30, "Every 30 seconds"],
+                   [60, "Every minute"], [300, "Every 5 minutes"]];
+const GAPS = [[60, "1 minute"], [120, "2 minutes"], [300, "5 minutes"], [600, "10 minutes"], [1800, "30 minutes"]];
+const NOT_SEEN = [[0, "Off"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"],
+                  [60, "1 hour"], [180, "3 hours"]];
+
+const cleanTopic = (v) => v.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+const randomTopic = () => {
+  const a = new Uint8Array(8);
+  crypto.getRandomValues(a);
+  return "facewatch-" + [...a].map((b) => (b % 36).toString(36)).join("");
+};
+
+export default function Settings({ settings: s, onChange, running }) {
+  const [cams, setCams] = useState([0, 1]);
+  const [scanMsg, setScanMsg] = useState("");
+  const [usage, setUsage] = useState(null);
+  const [token, setToken] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const loadUsage = () => api.storage().then(setUsage).catch(() => {});
+  useEffect(() => { loadUsage(); }, []);
+  const wipe = async () => {
+    if (!window.confirm("Delete ALL saved pictures (faces and full pictures)? The alert history stays.")) return;
+    setUsage(await api.deletePictures());
+  };
+
+  const scan = async () => {
+    setScanMsg("Scanning...");
+    try {
+      const { cameras } = await api.cameras();
+      setCams(cameras.length ? cameras : [0]);
+      setScanMsg(cameras.length ? `Found ${cameras.length}` : "No camera found");
+    } catch (e) { setScanMsg(e.message); }
+  };
+
+  const test = async () => {
+    setTestMsg("Sending...");
+    try { await api.testNotify(); setTestMsg("Sent. Check Telegram."); }
+    catch (e) { setTestMsg(e.message); }
+  };
+
+  const check = (k, label) => (
+    <label className="check"><input type="checkbox" checked={!!s[k]} onChange={(e) => onChange({ [k]: e.target.checked })} />{label}</label>
+  );
+
+  return (
+    <section>
+      <header className="head"><h2>Settings</h2></header>
+
+      <div className="card setgroup">
+        <h3>Detection</h3>
+        <label className="range">Match strictness: <b>{s.threshold.toFixed(2)}</b>
+          <input type="range" min="0.30" max="0.75" step="0.01" value={s.threshold}
+                 onChange={(e) => onChange({ threshold: parseFloat(e.target.value) })} />
+        </label>
+        <p className="muted">Higher is stricter. If someone who only looks similar gets flagged, raise it. If the real person is missed, lower it.</p>
+        {check("autostart", "Start watching automatically when the backend starts")}
+        {check("auto_reconnect", "Reconnect automatically if the camera drops")}
+      </div>
+
+      <div className="card setgroup">
+        <h3>Alerts</h3>
+        <label>Alert again while the person stays in view
+          <select value={s.alert_interval} onChange={(e) => onChange({ alert_interval: +e.target.value })}>
+            {INTERVALS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        {check("beep", "Play a beep in this browser")}
+        {check("snapshots", "Save a snapshot picture with each alert")}
+      </div>
+
+      <div className="card setgroup">
+        <h3>Visits and "not seen"</h3>
+        <label>A person back after this long counts as a new visit
+          <select value={s.visit_gap} onChange={(e) => onChange({ visit_gap: +e.target.value })}>
+            {GAPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <label>Warn me when a person has not been seen for
+          <select value={s.not_seen_minutes} onChange={(e) => onChange({ not_seen_minutes: +e.target.value })}>
+            {NOT_SEEN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <p className="muted">The "not seen" timer only runs while watching and the camera is connected. It restarts when you press Start or the camera reconnects. Notices are kept in memory and clear when the backend restarts.</p>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Phone alerts (ntfy, easiest)</h3>
+        <p className="muted">1) Install the free <b>ntfy</b> app on your phone. 2) Tap + and subscribe to the same topic name you type below. No account needed. Settings save automatically; wait a second before testing.</p>
+        <label>Topic name (keep it secret and long)
+          <input value={s.ntfy_topic || ""} placeholder="facewatch-yourname-4821"
+                 onChange={(e) => onChange({ ntfy_topic: cleanTopic(e.target.value) })} />
+        </label>
+        <div className="row">
+          <button className="btn" onClick={() => onChange({ ntfy_topic: randomTopic() })}>Make a random topic</button>
+        </div>
+        <p className="muted">Anyone who knows the topic name can read your alerts. Use letters, numbers, - and _ only.</p>
+        {check("notify_on_match", "Message me when a person arrives (start of a visit)")}
+        {check("notify_send_photo", "Include the face photo")}
+        {check("notify_on_missing", 'Message me when a person is "not seen"')}
+        <div className="row">
+          <button className="btn" onClick={test}>Send test message</button>
+          <span className="muted">{testMsg}</span>
+        </div>
+        <p className="muted">The test goes to every channel that is filled in (ntfy and/or Telegram).</p>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Telegram (optional)</h3>
+        <p className="muted">Only fill this in if you also want Telegram. Create a bot with @BotFather, press Start in your bot, and get your chat ID from @userinfobot.</p>
+        <label>Bot token
+          <input type="password" autoComplete="off" value={token}
+                 placeholder={s.telegram_token_set ? "Saved. Type to replace." : "123456:ABC-DEF..."}
+                 onChange={(e) => { setToken(e.target.value); onChange({ telegram_token: e.target.value }); }} />
+        </label>
+        <label>Chat ID
+          <input value={s.telegram_chat || ""} placeholder="123456789"
+                 onChange={(e) => onChange({ telegram_chat: e.target.value })} />
+        </label>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Storage</h3>
+        <p className="muted">Pictures use {usage ? `${usage.mb} MB (${usage.files} files)` : "..."} on this computer.</p>
+        {check("save_full_frame", "Save the full picture too (turn off to save only the small face photo)")}
+        <label>Delete pictures older than
+          <select value={s.keep_days} onChange={(e) => onChange({ keep_days: +e.target.value })}>
+            {[[1, "1 day"], [3, "3 days"], [7, "7 days"], [30, "30 days"], [0, "Never (keep forever)"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <div className="row">
+          <button className="btn" onClick={wipe}>Delete all saved pictures</button>
+          <button className="btn" onClick={loadUsage}>Refresh size</button>
+        </div>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Video source</h3>
+        {running && <p className="note">Source changes apply the next time you press Start.</p>}
+        <label className="check"><input type="radio" name="mode" checked={s.source_mode === "webcam"} onChange={() => onChange({ source_mode: "webcam" })} />Webcam</label>
+        {s.source_mode === "webcam" && (
+          <div className="row sub">
+            <select value={s.cam_index} onChange={(e) => onChange({ cam_index: +e.target.value })}>
+              {[...new Set([...cams, s.cam_index])].sort().map((i) => <option key={i} value={i}>Camera {i}</option>)}
+            </select>
+            <button className="btn" onClick={scan} disabled={running}>Scan cameras</button>
+            <span className="muted">{scanMsg}</span>
+          </div>
+        )}
+        <label className="check"><input type="radio" name="mode" checked={s.source_mode === "video"} onChange={() => onChange({ source_mode: "video" })} />Video file on the backend computer</label>
+        {s.source_mode === "video" && (
+          <input className="sub" placeholder="C:\Videos\clip.mp4" value={s.video_path} onChange={(e) => onChange({ video_path: e.target.value })} />
+        )}
+        <label className="check"><input type="radio" name="mode" checked={s.source_mode === "network"} onChange={() => onChange({ source_mode: "network" })} />Network camera (phone app, IP camera, RTSP)</label>
+        {s.source_mode === "network" && (
+          <>
+            <input className="sub" placeholder="rtsp://user:pass@192.168.1.20/stream" value={s.url} onChange={(e) => onChange({ url: e.target.value })} />
+            <p className="muted sub">Example: http://192.168.1.5:8080/video. Passwords are hidden in the log and the Live page.</p>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
