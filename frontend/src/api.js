@@ -2,6 +2,7 @@
 // works with the Vite dev proxy and when the backend serves the built app.
 async function req(path, opts) {
   const res = await fetch(path, opts);
+  if (res.status === 401) window.dispatchEvent(new Event("fw-logout"));
   if (!res.ok) {
     let msg = res.statusText;
     try {
@@ -40,6 +41,8 @@ export const api = {
   removePerson: (name) => req(`/api/people/${enc(name)}`, { method: "DELETE" }),
   alerts: (limit = 15) => req(`/api/alerts?limit=${limit}`),
   dashboard: () => req("/api/dashboard"),
+  health: () => req("/api/health"),
+  history: (name) => req(`/api/people/${enc(name)}/history`),
   storage: () => req("/api/storage"),
   deletePictures: () => req("/api/snapshots", { method: "DELETE" }),
   clearAlerts: () => req("/api/alerts", { method: "DELETE" }),

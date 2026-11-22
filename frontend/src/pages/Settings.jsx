@@ -162,6 +162,11 @@ export default function Settings({ settings: s, onChange, running }) {
           </>
         )}
       </div>
+
+      <div className="card setgroup">
+        <h3>Account</h3>
+        <button className="btn" onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}>Log out</button>
+      </div>
     </section>
   );
 }

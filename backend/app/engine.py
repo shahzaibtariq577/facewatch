@@ -35,11 +35,25 @@ def face_feature(recognizer, img, face_row):
     return f / (np.linalg.norm(f) + 1e-9)
 
 
-def draw_tag(frame, text, x, y, color):
-    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-    y0 = max(y - th - 10, 0)
-    cv2.rectangle(frame, (x, y0), (x + tw + 10, y0 + th + 10), color, -1)
-    cv2.putText(frame, text, (x + 5, y0 + th + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2)
+GREEN = (94, 197, 34)     # BGR colours
+AMBER = (27, 138, 201)
+
+
+def draw_tag(frame, text, x, y, color, text_color=(0, 0, 0)):
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    y0 = max(y - th - 14, 0)
+    cv2.rectangle(frame, (x, y0), (x + tw + 14, y0 + th + 12), color, -1)
+    cv2.putText(frame, text, (x + 7, y0 + th + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                text_color, 2, cv2.LINE_AA)
+
+
+def draw_corners(frame, x, y, w, h, color, thick=3):
+    """Face frame with bold corners and a faint full outline."""
+    cv2.rectangle(frame, (x, y), (x + w, y + h), color, 1, cv2.LINE_AA)
+    n = max(10, int(min(w, h) * 0.22))
+    for px, py, dx, dy in ((x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)):
+        cv2.line(frame, (px, py), (px + dx * n, py), color, thick, cv2.LINE_AA)
+        cv2.line(frame, (px, py), (px, py + dy * n), color, thick, cv2.LINE_AA)
 
 
 def check_photo(img):
@@ -146,6 +160,7 @@ class Engine:
         if not self.models_ready:
             raise StartError("The face models are still loading.")
         self.source, self.source_label = self.resolve_source()
+        self.people_dirty = True       # every new run must rebuild the face references
         self.stop_event.clear()
         self.running = True
         self.state = "starting"
@@ -376,13 +391,12 @@ class Engine:
                                 crops[best_name] = frame[max(y - my, 0):min(y + fh + my, h),
                                                          max(x - mx, 0):min(x + fw + mx, w)].copy()
                             matched[best_name] = max(matched.get(best_name, 0.0), best_avg)
-                            cv2.rectangle(frame, (x, y), (x + fw, y + fh), (94, 197, 34), 3)
-                            draw_tag(frame, f"{best_name} {best_avg:.2f}", x, y, (94, 197, 34))
+                            draw_corners(frame, x, y, fw, fh, GREEN)
+                            draw_tag(frame, f"{best_name}  {best_avg:.2f}", x, y, GREEN)
                         else:
-                            cv2.rectangle(frame, (x, y), (x + fw, y + fh), (150, 150, 150), 1)
-                            tag = f"{best_avg:.2f}" if best_avg is not None else "?"
-                            cv2.putText(frame, tag, (x, max(y - 6, 12)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (190, 190, 190), 1)
+                            draw_corners(frame, x, y, fw, fh, AMBER, 2)
+                            tag = f"No match  {best_avg:.2f}" if best_avg is not None else "Checking..."
+                            draw_tag(frame, tag, x, y, AMBER, (255, 255, 255))
 
                 for t_id in [k for k, t in tracks.items() if frame_no - t["seen"] > LOST_AFTER]:
                     del tracks[t_id]

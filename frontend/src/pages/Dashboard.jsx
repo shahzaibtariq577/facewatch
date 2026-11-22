@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatTime, snapshotUrl } from "../api.js";
+import { useToast } from "../Toast.jsx";
 
 function Hourly({ data }) {
   const max = Math.max(1, ...data);
@@ -45,6 +46,14 @@ export default function Dashboard({ alertSeq }) {
   const [d, setD] = useState(null);
   const [selected, setSelected] = useState(null);
   const [err, setErr] = useState("");
+  const toast = useToast();
+  const [health, setHealth] = useState(null);
+  useEffect(() => {
+    const go = () => api.health().then(setHealth).catch((e) => setHealth({ error: e.message }));
+    go();
+    const id = setInterval(go, 5000);
+    return () => clearInterval(id);
+  }, []);
 
   const load = () => api.dashboard().then(setD).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, [alertSeq]);
@@ -56,12 +65,16 @@ export default function Dashboard({ alertSeq }) {
   const clear = async () => {
     if (!window.confirm("Delete the alert history? Snapshot pictures are kept.")) return;
     await api.clearAlerts();
+    toast("History cleared");
     setSelected(null);
     load();
   };
 
   if (!d) return <p className="muted">{err || "Loading..."}</p>;
   const sel = d.history.find((r) => r.id === selected);
+  const present = d.visits.filter((v) => v.active);
+  const totalAll = d.by_person.reduce((n, p) => n + p.total, 0);
+  const top = [...d.by_person].sort((a, b) => b.total - a.total).slice(0, 5);
 
   return (
     <section>
@@ -82,6 +95,58 @@ export default function Dashboard({ alertSeq }) {
           <span>Last alert</span>
           <b className="small">{d.last ? `${formatTime(d.last.time, false)} ${d.last.name}` : "none yet"}</b>
         </div>
+      </div>
+
+      <div className="grid2">
+        <div className="card">
+          <h3>Currently present</h3>
+          {present.length === 0
+            ? <p className="muted">Nobody is in view right now.</p>
+            : <ul className="present">{present.map((v, i) => (
+                <li key={i}>
+                  <Face file={v.face} name={v.name} size={48} />
+                  <div><strong>{v.name}</strong><span className="muted">since {formatTime(v.start, false)}</span></div>
+                </li>
+              ))}</ul>}
+        </div>
+        <div className="card">
+          <h3>Top people</h3>
+          {totalAll === 0
+            ? <p className="muted">Alert counts per person appear here.</p>
+            : <ul className="bars">{top.map((p) => {
+                const pct = Math.round((p.total / totalAll) * 100);
+                return (
+                  <li key={p.name}>
+                    <span>{p.name}</span>
+                    <div className="bar"><i style={{ width: `${pct}%` }} /></div>
+                    <b>{pct}%</b>
+                  </li>
+                );
+              })}</ul>}
+        </div>
+      </div>
+
+      <div className="card gallery-card">
+        <h3>System health</h3>
+        {!health ? <p className="muted">Loading...</p> : health.error ? (
+          <p className="note error">Health check failed: {health.error}. Restart the backend with the new main.py and extras.py.</p>
+        ) : (
+          <>
+            <ul className="bars">
+              {[["CPU", health.cpu], ["Memory", health.ram], ["Disk", health.disk]].map(([l, v]) => v == null ? null : (
+                <li key={l}>
+                  <span>{l}</span>
+                  <div className="bar"><i className={v > 85 ? "hot" : ""} style={{ width: `${v}%` }} /></div>
+                  <b>{v}%</b>
+                </li>
+              ))}
+            </ul>
+            {health.cpu == null && <p className="muted visits-note">To see CPU and memory, run: pip install psutil</p>}
+            <p className="muted visits-note">
+              {health.running ? `Watching at ${Number(health.fps).toFixed(0)} FPS` : "Not watching"} · pictures use {health.pictures_mb} MB · {health.disk_free_gb} GB free on this drive
+            </p>
+          </>
+        )}
       </div>
 
       <div className="card gallery-card">

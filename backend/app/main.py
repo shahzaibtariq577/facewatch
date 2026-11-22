@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import notify
 from . import storage as st
 from .engine import Engine, StartError, check_photo
+from .extras import make_router
 
 st.init_dirs()
 cfg = st.load_settings()
@@ -298,6 +299,9 @@ def dashboard():
         "hourly": hourly, "by_person": by_person,
         "history": [_row(r) for r in reversed(rows[-300:])],
     }
+
+
+app.include_router(make_router(cfg, engine))
 
 
 # --------------------------------------------- serve the built React app

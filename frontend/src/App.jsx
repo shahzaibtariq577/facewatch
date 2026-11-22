@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Video, LayoutDashboard, Users, Settings as Cog, Moon, Sun } from "lucide-react";
 import { api, beep } from "./api.js";
+import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import People from "./pages/People.jsx";
 import Settings from "./pages/Settings.jsx";
 
 const PAGES = [
-  ["live", "Live"],
-  ["dashboard", "Dashboard"],
-  ["people", "People"],
-  ["settings", "Settings"],
+  ["live", "Live", Video],
+  ["dashboard", "Dashboard", LayoutDashboard],
+  ["people", "People", Users],
+  ["settings", "Settings", Cog],
 ];
 
 export default function App() {
@@ -20,6 +22,14 @@ export default function App() {
   const [error, setError] = useState("");
   const [streamKey, setStreamKey] = useState(0);
   const [unseen, setUnseen] = useState(0);
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("fw-theme", theme); } catch { /* storage blocked */ }
+  }, [theme]);
+  const toast = useToast();
   const pageRef = useRef(page);
   const settingsRef = useRef(settings);
   const seqRef = useRef(null);
@@ -66,6 +76,14 @@ export default function App() {
     wasRunning.current = !!status?.running;
   }, [status?.running]);
 
+  const prevState = useRef(null);
+  useEffect(() => {
+    const cur = status?.state;
+    if (cur === "reconnecting" && prevState.current !== "reconnecting") toast("Camera disconnected. Reconnecting...", "warn");
+    else if (prevState.current === "reconnecting" && cur && cur !== "reconnecting") toast("Camera reconnected");
+    if (cur) prevState.current = cur;
+  }, [status?.state]);
+
   const open = (key) => {
     setPage(key);
     if (key === "dashboard") setUnseen(0);
@@ -91,23 +109,31 @@ export default function App() {
     saveTimer.current = setTimeout(() => {
       const body = pending.current;
       pending.current = {};
-      api.saveSettings(body).catch((e) => setError(e.message));
+      api.saveSettings(body).then(() => toast("Settings saved")).catch((e) => { setError(e.message); toast(e.message, "error"); });
     }, 400);
-  }, []);
+  }, [toast]);
 
   return (
     <div className="shell">
       <nav className="side" aria-label="Main">
         <h1 className="brand">FaceWatch</h1>
         <p className="tagline">Real-time face watcher</p>
-        {PAGES.map(([key, label]) => (
+        {PAGES.map(([key, label, Icon]) => (
           <button key={key} className={`nav ${page === key ? "on" : ""}`}
                   aria-current={page === key ? "page" : undefined} onClick={() => open(key)}>
-            {label}
+            <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
             {key === "dashboard" && unseen > 0 && <span className="badge">{unseen}</span>}
           </button>
         ))}
-        <span className="ver">v5.0</span>
+        <button className="nav theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+          <span className="nav-l">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span className="t-l">{theme === "dark" ? "Light mode" : "Dark mode"}</span></span>
+        </button>
+        <span className={`sys ${offline ? "off" : status?.running ? "on" : ""}`}>
+          <i className="lv-dot" aria-hidden="true" />
+          {offline ? "Backend offline" : status?.running ? "Watching" : "System online"}
+        </span>
+        <span className="ver">v9.0</span>
       </nav>
       <main className="main">
         {page === "live" && (

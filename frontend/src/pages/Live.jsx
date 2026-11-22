@@ -1,26 +1,38 @@
 import { useEffect, useState } from "react";
+import { Play, Square, Camera, Users, Gauge, Radio } from "lucide-react";
 import { api, formatTime, snapshotUrl } from "../api.js";
 
-function banner(s, offline) {
-  if (offline) return { tone: "warn", text: "Cannot reach the backend. Start it on port 8000." };
-  if (!s) return { tone: "idle", text: "Connecting..." };
-  if (s.state === "error" && !s.running) return { tone: "error", text: s.note || "Something went wrong." };
-  if (!s.models_ready) return { tone: "warn", text: "Preparing the face models. The first run downloads about 40 MB." };
+// One function decides the state, so the chip, the border and the text can never disagree.
+function describe(s, offline) {
+  if (offline) return { tone: "warn", label: "Backend offline", text: "Cannot reach the backend. Start it on port 8000." };
+  if (!s) return { tone: "idle", label: "Connecting", text: "Connecting..." };
+  if (s.state === "error" && !s.running) return { tone: "error", label: "Error", text: s.note || "Something went wrong." };
+  if (!s.models_ready) return { tone: "warn", label: "Loading models", text: "Preparing the face models. The first run downloads about 40 MB." };
   if (!s.running) {
     return s.people === 0
-      ? { tone: "warn", text: "No people yet. Open People and add a photo to begin." }
-      : { tone: "idle", text: "Press Start watching to begin." };
+      ? { tone: "warn", label: "No people yet", text: "Open People and add a photo to begin." }
+      : { tone: "idle", label: "Stopped", text: "Press Start watching to begin." };
   }
-  if (s.state === "reconnecting") return { tone: "warn", text: s.note || "Reconnecting to the camera..." };
+  if (s.state === "reconnecting") return { tone: "warn", label: "Reconnecting", text: s.note || "Reconnecting to the camera..." };
   if (s.alert_age !== null && s.alert_age < 6 && s.last_alert) {
-    return { tone: "alert", text: `Alert: ${s.last_alert.name} detected (${s.last_alert.score.toFixed(2)})` };
+    return { tone: "alert", label: `Alert: ${s.last_alert.name}`, text: `${s.last_alert.name} detected, similarity ${s.last_alert.score.toFixed(2)}` };
   }
-  if (s.matched.length) return { tone: "match", text: `${s.matched.join(", ")} in view` };
-  if (s.missing?.length) return { tone: "warn", text: `Not seen for a while: ${s.missing.join(", ")}` };
-  return { tone: "idle", text: "Watching. No target in view." };
+  if (s.matched.length) return { tone: "match", label: `${s.matched.join(", ")} in view`, text: `${s.matched.join(", ")} in view` };
+  if (s.faces > 0) return { tone: "face", label: "Face seen, no match", text: "A face is in view but it does not match anyone you saved." };
+  if (s.missing?.length) return { tone: "warn", label: "Not seen for a while", text: `Not seen for a while: ${s.missing.join(", ")}` };
+  return { tone: "idle", label: "Watching", text: "Watching. No face in view." };
 }
 
 const ICON = { visit: "➜", missing: "!", back: "✓" };
+
+function Stat({ icon: Icon, label, value }) {
+  return (
+    <div className="lv-stat">
+      <Icon size={16} aria-hidden="true" />
+      <div><span>{label}</span><b>{value}</b></div>
+    </div>
+  );
+}
 
 export default function Live({ status, offline, error, streamKey, onToggle }) {
   const [feed, setFeed] = useState([]);
@@ -29,22 +41,19 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
     api.alerts(15).then(setFeed).catch(() => {});
   }, [seq]);
 
-  const b = banner(status, offline);
+  const d = describe(status, offline);
   const running = !!status?.running;
-  const pill = !status ? "Connecting"
-    : !status.models_ready ? "Loading models"
-    : !running ? "Stopped"
-    : status.state === "reconnecting" ? "Reconnecting"
-    : `Watching, ${status.fps.toFixed(0)} FPS`;
+  const inView = running && status.matched?.length ? status.matched[0] : null;
+  const lastHit = inView ? feed.find((a) => a.name === inView) : null;
 
   return (
     <section>
       <header className="head">
         <h2>Live</h2>
         <div className="row">
-          <span className={`pill ${running ? "go" : ""}`}>{pill}</span>
-          <button className={running ? "btn danger" : "btn primary"} onClick={onToggle}
+          <button className={running ? "btn danger lv-btn" : "btn primary lv-btn"} onClick={onToggle}
                   disabled={!status || !status.models_ready}>
+            {running ? <Square size={16} /> : <Play size={16} />}
             {running ? "Stop" : "Start watching"}
           </button>
         </div>
@@ -54,25 +63,61 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
 
       <div className="live">
         <div>
-          <p className={`banner ${b.tone}`} role="status">{b.text}</p>
-          <div className={`frame ${b.tone === "alert" ? "alert" : ""}`}>
-            {running
-              ? <img key={streamKey} src={`/api/stream?k=${streamKey}`} alt="Live camera view" />
-              : <span className="off">Camera is off</span>}
+          <div className={`lv-stage tone-${d.tone}`}>
+            <div className="lv-top">
+              <span className={`lv-chip tone-${d.tone}`} role="status">
+                <i className={`lv-dot ${running && d.tone !== "warn" ? "pulse" : ""}`} aria-hidden="true" />
+                {d.label}
+              </span>
+              <span className="lv-right">
+                <span className="lv-live lv-src"><Camera size={14} aria-hidden="true" /> {status?.source || "Camera"}</span>
+                {running && <span className="lv-live"><i className="lv-rec" aria-hidden="true" /> REC</span>}
+              </span>
+            </div>
+            <div className="lv-video">
+              {running
+                ? <img key={streamKey} src={`/api/stream?k=${streamKey}`} alt="Live camera view" />
+                : <div className="lv-off"><Camera size={40} aria-hidden="true" /><p>Camera is off</p></div>}
+            </div>
+            {running && (
+              <div className="lv-bottom">
+                <span>Monitoring active, {status.fps.toFixed(0)} FPS</span>
+                <span><Users size={14} aria-hidden="true" /> {status.faces} {status.faces === 1 ? "face" : "faces"} detected</span>
+              </div>
+            )}
           </div>
-          <p className="meta">
-            {running
-              ? `Faces in view: ${status.faces}   Best score: ${status.best.toFixed(2)}   Source: ${status.source}`
-              : status?.source ? `Last source: ${status.source}` : ""}
-            {status?.note && running ? `   ${status.note}` : ""}
-          </p>
+          <p className="lv-line">{d.text}</p>
+
+          <div className="lv-stats">
+            <Stat icon={Gauge} label="Best similarity" value={running ? status.best.toFixed(2) : "-"} />
+            <Stat icon={Camera} label="Source" value={status?.source || "-"} />
+          </div>
+          {status?.note && running && <p className="meta">{status.note}</p>}
         </div>
 
         <div className="side-col">
+          <aside className="card lv-who">
+            <h3>Face detected</h3>
+            {inView ? (
+              <div className="who-row">
+                {lastHit?.face
+                  ? <img className="face" src={snapshotUrl(lastHit.face)} alt="" />
+                  : <span className="face blank" aria-hidden="true">{inView[0]}</span>}
+                <div>
+                  <strong>{inView}</strong>
+                  <p className="muted">Similarity {lastHit ? lastHit.score : status.best.toFixed(2)}</p>
+                  <span className="badge-known">Known person</span>
+                </div>
+              </div>
+            ) : running && status.faces > 0 ? (
+              <div><strong>Face not recognised</strong><p className="muted">Not one of your saved people.</p></div>
+            ) : <p className="muted">{running ? "No face in view." : "Start watching to see who is in view."}</p>}
+          </aside>
+
           <aside className="card feed">
             <h3>Recent alerts</h3>
             {feed.length === 0
-              ? <p className="muted">New alerts appear here while you are watching.</p>
+              ? <p className="muted">No alerts yet. When a saved person is seen, they appear here.</p>
               : <ul>{feed.map((a) => (
                   <li key={a.id}>
                     {a.face
