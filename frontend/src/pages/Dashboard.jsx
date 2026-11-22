@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, formatTime, snapshotUrl } from "../api.js";
+import { api, ago, formatTime, snapshotUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
 
 function Hourly({ data }) {
@@ -42,8 +42,34 @@ function duration(sec) {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-export default function Dashboard({ alertSeq }) {
+function PersonLink({ name, onOpen }) {
+  return onOpen
+    ? <button className="linkbtn" onClick={() => onOpen(name)} title={`Open ${name}'s profile`}>{name}</button>
+    : <>{name}</>;
+}
+
+const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"], [0, "All time"]];
+
+function Delta({ now, prev, days }) {
+  if (prev == null || now == null) return null;
+  const label = days === 1 ? "yesterday" : `the previous ${days} days`;
+  const diff = now - prev;
+  if (diff === 0) return <small className="delta">Same as {label}</small>;
+  return <small className="delta">{diff > 0 ? "▲" : "▼"} {Math.abs(diff)} {diff > 0 ? "more" : "fewer"} than {label}</small>;
+}
+
+export default function Dashboard({ alertSeq, onOpenPerson }) {
   const [d, setD] = useState(null);
+  const [days, setDays] = useState(() => {
+    try {
+      const v = parseInt(localStorage.getItem("fw-days"), 10);
+      return [0, 1, 7, 30].includes(v) ? v : 7;
+    } catch { return 7; }
+  });
+  const pickRange = (v) => {
+    setDays(v);
+    try { localStorage.setItem("fw-days", String(v)); } catch { /* storage blocked */ }
+  };
   const [selected, setSelected] = useState(null);
   const [err, setErr] = useState("");
   const toast = useToast();
@@ -55,12 +81,12 @@ export default function Dashboard({ alertSeq }) {
     return () => clearInterval(id);
   }, []);
 
-  const load = () => api.dashboard().then(setD).catch((e) => setErr(e.message));
-  useEffect(() => { load(); }, [alertSeq]);
+  const load = () => api.dashboard(days).then(setD).catch((e) => setErr(e.message));
   useEffect(() => {
+    load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, []);
+  }, [days, alertSeq]);
 
   const clear = async () => {
     if (!window.confirm("Delete the alert history? Snapshot pictures are kept.")) return;
@@ -73,6 +99,7 @@ export default function Dashboard({ alertSeq }) {
   if (!d) return <p className="muted">{err || "Loading..."}</p>;
   const sel = d.history.find((r) => r.id === selected);
   const present = d.visits.filter((v) => v.active);
+  const rangeLabel = RANGES.find(([v]) => v === days)[1];
   const totalAll = d.by_person.reduce((n, p) => n + p.total, 0);
   const top = [...d.by_person].sort((a, b) => b.total - a.total).slice(0, 5);
 
@@ -81,15 +108,20 @@ export default function Dashboard({ alertSeq }) {
       <header className="head">
         <h2>Dashboard</h2>
         <div className="row">
+          <div className="seg" role="group" aria-label="Date range">
+            {RANGES.map(([v, l]) => (
+              <button key={v} className={days === v ? "on" : ""} aria-pressed={days === v} onClick={() => pickRange(v)}>{l}</button>
+            ))}
+          </div>
           <a className="btn" href="/api/alerts/export" download>Export CSV</a>
           <button className="btn" onClick={clear}>Clear history</button>
         </div>
       </header>
 
       <div className="stats">
-        <div className="card stat"><span>Alerts today</span><b>{d.today}</b></div>
-        <div className="card stat"><span>Visits today</span><b>{d.visits_today}</b></div>
-        <div className="card stat"><span>Total alerts</span><b>{d.total}</b></div>
+        <div className="card stat"><span>Alerts · {rangeLabel}</span><b>{d.range_alerts}</b><Delta now={d.range_alerts} prev={d.prev_alerts} days={days} /></div>
+        <div className="card stat"><span>Visits · {rangeLabel}</span><b>{d.range_visits}</b><Delta now={d.range_visits} prev={d.prev_visits} days={days} /></div>
+        <div className="card stat"><span>Currently present</span><b>{present.length}</b></div>
         <div className="card stat"><span>People tracked</span><b>{d.people}</b></div>
         <div className="card stat">
           <span>Last alert</span>
@@ -105,7 +137,7 @@ export default function Dashboard({ alertSeq }) {
             : <ul className="present">{present.map((v, i) => (
                 <li key={i}>
                   <Face file={v.face} name={v.name} size={48} />
-                  <div><strong>{v.name}</strong><span className="muted">since {formatTime(v.start, false)}</span></div>
+                  <div><strong><PersonLink name={v.name} onOpen={onOpenPerson} /></strong><span className="muted">since {formatTime(v.start, false)}</span></div>
                 </li>
               ))}</ul>}
         </div>
@@ -160,7 +192,7 @@ export default function Dashboard({ alertSeq }) {
                           aria-label={`${r.name}, ${formatTime(r.time)}`}>
                     <Face file={r.face} name={r.name} size={120} />
                     <strong>{r.name}</strong>
-                    <span>{formatTime(r.time, false)}  ·  {r.score}</span>
+                    <span title={formatTime(r.time)}>{ago(r.time)}  ·  {r.score}</span>
                   </button>
                 </li>
               ))}
@@ -180,7 +212,7 @@ export default function Dashboard({ alertSeq }) {
               {d.visits.map((v, i) => (
                 <tr key={i}>
                   <td><Face file={v.face} name={v.name} size={32} /></td>
-                  <td>{v.name} {v.active && <span className="tag-now">now</span>}</td>
+                  <td><PersonLink name={v.name} onOpen={onOpenPerson} /> {v.active && <span className="tag-now">now</span>}</td>
                   <td>{formatTime(v.start)}</td>
                   <td>{formatTime(v.end, false)}</td>
                   <td>{duration(v.seconds)}</td>
@@ -193,15 +225,20 @@ export default function Dashboard({ alertSeq }) {
       </div>
 
       <div className="grid2">
-        <div className="card"><h3>Alerts per hour today</h3><Hourly data={d.hourly} /></div>
+        <div className="card">
+          <h3>Alerts per hour today</h3>
+          {d.hourly.some((n) => n > 0)
+            ? <Hourly data={d.hourly} />
+            : <p className="muted">No alerts yet today. Bars appear here when a saved person is seen.</p>}
+        </div>
         <div className="card">
           <h3>By person</h3>
           <table>
-            <thead><tr><th>Person</th><th>Today</th><th>Total</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Person</th><th>Today</th>{days > 1 && <th>{rangeLabel}</th>}<th>Total</th><th>Last seen</th></tr></thead>
             <tbody>
-              {d.by_person.length === 0 && <tr><td colSpan="4" className="muted">No people yet.</td></tr>}
+              {d.by_person.length === 0 && <tr><td colSpan="5" className="muted">No people yet.</td></tr>}
               {d.by_person.map((p) => (
-                <tr key={p.name}><td className="who"><Face file={p.face} name={p.name} size={28} />{p.name}</td><td>{p.today}</td><td>{p.total}</td><td>{formatTime(p.last)}</td></tr>
+                <tr key={p.name}><td className="who"><Face file={p.face} name={p.name} size={28} /><PersonLink name={p.name} onOpen={onOpenPerson} /></td><td>{p.today}</td>{days > 1 && <td>{p.range}</td>}<td>{p.total}</td><td>{formatTime(p.last)}</td></tr>
               ))}
             </tbody>
           </table>
@@ -232,7 +269,7 @@ export default function Dashboard({ alertSeq }) {
           {!sel && <p className="muted">Select a sighting to see the face and the full picture.</p>}
           {sel && (
             <div className="detail">
-              <p><strong>{sel.name}</strong><span className="muted">  {formatTime(sel.time)}  ·  score {sel.score}  ·  {sel.source}</span></p>
+              <p><strong><PersonLink name={sel.name} onOpen={onOpenPerson} /></strong><span className="muted">  {formatTime(sel.time)}  ·  score {sel.score}  ·  {sel.source}</span></p>
               {(sel.snapshot || sel.face)
                 ? <>
                     {sel.face && <><h4>Face</h4><img className="snap face-big" src={snapshotUrl(sel.face)} alt={`Face of ${sel.name}`} /></>}

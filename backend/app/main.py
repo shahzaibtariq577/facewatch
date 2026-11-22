@@ -3,7 +3,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, time as dtime
 from typing import List
 
 import cv2
@@ -256,48 +256,68 @@ def delete_snapshots():
 
 
 @app.get("/api/dashboard")
-def dashboard():
+def dashboard(days: int = 0):
+    """days: 1 = today, 7, 30, or 0 = all time. Also returns the previous equal period for comparison."""
+    days = days if days in (1, 7, 30) else 0
     rows = st.read_log()
     now = datetime.now()
     today = now.date()
+    start = prev_start = None
+    if days:
+        start = datetime.combine(today, dtime.min) - timedelta(days=days - 1)
+        prev_start = start - timedelta(days=days)
+    in_range = [r for r in rows if start is None or r["time"] >= start]
+    prev_alerts = (sum(1 for r in rows if prev_start <= r["time"] < start) if days else None)
     todays = [r for r in rows if r["time"].date() == today]
     hourly = [0] * 24
     for r in todays:
         hourly[r["time"].hour] += 1
 
+    range_count = {}
+    for r in in_range:
+        range_count[r["name"]] = range_count.get(r["name"], 0) + 1
+
     stats = {}
     for r in rows:
-        s = stats.setdefault(r["name"], {"today": 0, "total": 0, "last": None, "face": ""})
+        s = stats.setdefault(r["name"], {"today": 0, "total": 0, "last": None, "first": None, "face": ""})
         s["total"] += 1
         s["face"] = _face(r["snapshot"]) or s["face"]
         if r["time"].date() == today:
             s["today"] += 1
         if s["last"] is None or r["time"] > s["last"]:
             s["last"] = r["time"]
+        if s["first"] is None or r["time"] < s["first"]:
+            s["first"] = r["time"]
     names = sorted({p["name"] for p in st.people_summary()} | set(stats))
     by_person = [{"name": n, "today": stats.get(n, {}).get("today", 0),
+                  "range": range_count.get(n, 0),
                   "total": stats.get(n, {}).get("total", 0),
                   "face": stats.get(n, {}).get("face", ""),
-                  "last": stats[n]["last"].strftime(st.TIME_FMT) if n in stats else None} for n in names]
+                  "last": stats[n]["last"].strftime(st.TIME_FMT) if n in stats else None,
+                  "first": stats[n]["first"].strftime(st.TIME_FMT) if n in stats else None} for n in names]
 
     # visits: alerts of one person closer together than the gap form one visit
     gap = max(cfg.get("visit_gap", 120), 2 * cfg.get("alert_interval", 10))
     all_visits = st.build_visits(rows, gap)
     visits_today = sum(1 for v in all_visits if v["start"].date() == today)
+    range_visits = [v for v in all_visits if start is None or v["start"] >= start]
+    prev_visits = (sum(1 for v in all_visits if prev_start <= v["start"] < start) if days else None)
     visits = [{"name": v["name"], "start": v["start"].strftime(st.TIME_FMT),
                "end": v["end"].strftime(st.TIME_FMT),
                "seconds": int((v["end"] - v["start"]).total_seconds()),
                "alerts": v["alerts"], "face": v["face"],
                "active": (now - v["end"]).total_seconds() <= gap}
-              for v in sorted(all_visits, key=lambda v: v["end"], reverse=True)[:200]]
+              for v in sorted(range_visits, key=lambda v: v["end"], reverse=True)[:200]]
 
     last = max(rows, key=lambda r: r["time"]) if rows else None
     return {
         "today": len(todays), "total": len(rows), "people": engine.people_count,
         "visits_today": visits_today, "visits": visits,
+        "days": days, "range_alerts": len(in_range), "range_visits": len(range_visits),
+        "prev_alerts": prev_alerts, "prev_visits": prev_visits,
         "last": {"time": last["time"].strftime(st.TIME_FMT), "name": last["name"]} if last else None,
         "hourly": hourly, "by_person": by_person,
-        "history": [_row(r) for r in reversed(rows[-300:])],
+        "history": [_row(r) for r in reversed(in_range[-300:])],
     }
 
 

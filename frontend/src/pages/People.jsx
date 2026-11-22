@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { api, formatTime, thumbUrl } from "../api.js";
+import { api, ago, formatTime, thumbUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
 
 const dur = (s) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min`
   : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`);
 
-export default function People() {
+export default function People({ focus, onFocusDone }) {
   const [people, setPeople] = useState([]);
   const [name, setName] = useState("");
   const [files, setFiles] = useState([]);
@@ -16,20 +16,22 @@ export default function People() {
   const [stats, setStats] = useState({});
   const [open, setOpen] = useState(null);
   const [hist, setHist] = useState(null);
+  const [q, setQ] = useState("");
   const toast = useToast();
   const addTo = useRef(null);
   const picker = useRef(null);
   const personCam = useRef(null);
   const gallery = useRef(null);
   const camera = useRef(null);
+  const histRef = useRef(null);
 
   const load = () => {
     api.people().then(setPeople).catch((e) => setErr(e.message));
     api.dashboard().then((d) => {
       const m = {};
-      d.by_person.forEach((p) => { m[p.name] = { alerts: p.total, last: p.last, visits: 0, active: false }; });
+      d.by_person.forEach((p) => { m[p.name] = { alerts: p.total, last: p.last, first: p.first, visits: 0, active: false }; });
       d.visits.forEach((v) => {
-        if (!m[v.name]) m[v.name] = { alerts: 0, last: null, visits: 0, active: false };
+        if (!m[v.name]) m[v.name] = { alerts: 0, last: null, first: null, visits: 0, active: false };
         m[v.name].visits += 1;
         if (v.active) m[v.name].active = true;
       });
@@ -78,13 +80,27 @@ export default function People() {
     if (window.confirm(`Remove ${n} and all their photos?`)) run(() => api.removePerson(n), "Person removed");
   };
 
-  const showHistory = (n) => {
-    if (open === n) { setOpen(null); return; }
+  const openHist = (n) => {
     setOpen(n); setHist(null);
     api.history(n).then(setHist).catch((e) => toast(e.message, "error"));
   };
+  const showHistory = (n) => (open === n ? setOpen(null) : openHist(n));
+
+  // Opened from the Dashboard (click on a person's name): show that person's history.
+  useEffect(() => {
+    if (!focus) return;
+    openHist(focus);
+    if (onFocusDone) onFocusDone();
+  }, [focus]);
+
+  useEffect(() => {
+    if (open && histRef.current) histRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [open]);
 
   const addFor = (n, ref) => { addTo.current = n; ref.current.click(); };
+
+  const needle = q.trim().toLowerCase();
+  const shown = people.filter((p) => p.name.toLowerCase().includes(needle));
 
   return (
     <section>
@@ -125,7 +141,7 @@ export default function People() {
       <input ref={personCam} type="file" accept="image/*" capture="environment" hidden onChange={pickFor} />
 
       {open && (
-        <section className="card hist" aria-label={`${open} visit history`}>
+        <section className="card hist" ref={histRef} aria-label={`${open} visit history`}>
           <div className="head">
             <h3>{open}: visit history</h3>
             <button className="btn" onClick={() => setOpen(null)}>Close</button>
@@ -152,26 +168,47 @@ export default function People() {
         </section>
       )}
 
-      <ul className="people">
+      {people.length > 0 && (
+        <div className="pbar">
+          <input type="text" aria-label="Search people" placeholder="Search people" value={q}
+                 onChange={(e) => setQ(e.target.value)} />
+          <span className="pcount">
+            {q ? `${shown.length} of ${people.length}` : `${people.length} ${people.length === 1 ? "person" : "people"}`}
+          </span>
+        </div>
+      )}
+
+      <ul className="pgrid">
         {people.length === 0 && <li className="muted empty">No people yet. Add the first person above.</li>}
-        {people.map((p) => (
-          <li key={p.name} className="card person">
-            <img src={thumbUrl(p.name, version)} alt="" width="56" height="56" />
-            <div>
-              <strong>{p.name}{stats[p.name]?.active && <span className="tag-now">now</span>}</strong>
-              <span className="muted">{p.photos} {p.photos === 1 ? "photo" : "photos"}</span>
-              {stats[p.name] && (
-                <span className="muted pstats">
-                  {stats[p.name].visits} {stats[p.name].visits === 1 ? "visit" : "visits"} · {stats[p.name].alerts} alerts · last seen {formatTime(stats[p.name].last)}
-                </span>
-              )}
-            </div>
-            <button className="btn" onClick={() => showHistory(p.name)}>History</button>
-            <button className="btn" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
-            <button className="btn" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
-            <button className="btn" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
-          </li>
-        ))}
+        {people.length > 0 && shown.length === 0 && <li className="muted empty">No one matches "{q}".</li>}
+        {shown.map((p) => {
+          const s = stats[p.name];
+          const ready = p.photos >= 2;
+          return (
+            <li key={p.name} className="card pcard">
+              <div className="phead">
+                <img src={thumbUrl(p.name, version)} alt={`Photo of ${p.name}`} width="72" height="72" />
+                <div>
+                  <strong>{p.name}{s?.active && <span className="tag-now">now</span>}</strong>
+                  <span className="muted">{p.photos} {p.photos === 1 ? "photo" : "photos"}</span>
+                  <span className={`pill-s ${ready ? "ok" : "warn"}`}>{ready ? "Ready" : "Add more photos"}</span>
+                </div>
+              </div>
+              <div className="pstat">
+                <div><span>Visits</span><b>{s ? s.visits : 0}</b></div>
+                <div><span>Alerts</span><b>{s ? s.alerts : 0}</b></div>
+                <div><span>Last seen</span><b title={s?.last ? formatTime(s.last) : ""}>{s?.last ? ago(s.last) : "-"}</b></div>
+              </div>
+              {s?.first && <p className="pfirst">First seen {formatTime(s.first)}</p>}
+              <div className="pact">
+                <button className="btn" onClick={() => showHistory(p.name)}>History</button>
+                <button className="btn" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
+                <button className="btn" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
+                <button className="btn" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

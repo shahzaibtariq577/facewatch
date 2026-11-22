@@ -40,7 +40,7 @@ export const api = {
   addPhotos: (name, files) => req(`/api/people/${enc(name)}/photos`, form(null, files)),
   removePerson: (name) => req(`/api/people/${enc(name)}`, { method: "DELETE" }),
   alerts: (limit = 15) => req(`/api/alerts?limit=${limit}`),
-  dashboard: () => req("/api/dashboard"),
+  dashboard: (days = 0) => req(`/api/dashboard?days=${days}`),
   health: () => req("/api/health"),
   history: (name) => req(`/api/people/${enc(name)}/history`),
   storage: () => req("/api/storage"),
@@ -58,6 +58,15 @@ export function formatTime(t, withDate = true) {
   return d.toLocaleString([], withDate
     ? { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" }
     : { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function ago(t) {
+  if (!t) return "";
+  const s = Math.max(0, Math.round((Date.now() - new Date(t.replace(" ", "T")).getTime()) / 1000));
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
 }
 
 let audio;

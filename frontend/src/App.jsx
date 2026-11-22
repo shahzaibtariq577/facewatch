@@ -22,6 +22,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [streamKey, setStreamKey] = useState(0);
   const [unseen, setUnseen] = useState(0);
+  const [focus, setFocus] = useState(null);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
   });
@@ -88,6 +89,7 @@ export default function App() {
     setPage(key);
     if (key === "dashboard") setUnseen(0);
   };
+  const openPerson = (name) => { setFocus(name); open("people"); };
 
   const toggle = async () => {
     setError("");
@@ -133,14 +135,14 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v9.0</span>
+        <span className="ver">v10.0</span>
       </nav>
       <main className="main">
         {page === "live" && (
           <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle} />
         )}
-        {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} />}
-        {page === "people" && <People />}
+        {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
+        {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
         {page === "settings" && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
         )}
