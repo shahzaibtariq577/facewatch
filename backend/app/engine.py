@@ -104,6 +104,8 @@ class Engine:
         self.matched = []
         self.source = 0
         self.source_label = ""
+        self.paused = False                # watching is on, but nobody is checked
+        self.res = ""                      # camera picture size, e.g. 1280x720
 
         self.alert_seq = 0
         self.last_alert = None
@@ -162,6 +164,7 @@ class Engine:
         self.source, self.source_label = self.resolve_source()
         self.people_dirty = True       # every new run must rebuild the face references
         self.stop_event.clear()
+        self.paused = False
         self.running = True
         self.state = "starting"
         self.note = ""
@@ -176,11 +179,25 @@ class Engine:
         if t and t.is_alive():
             t.join(timeout=3)
         self.running = False
+        self.paused = False
+        self.res = ""
         if self.state != "error":
             self.state = "stopped"
         self.matched, self.faces, self.fps = [], 0, 0.0
         with self._cond:
             self._cond.notify_all()
+
+    def pause(self):
+        """Keep the camera connected but stop checking faces and sending alerts."""
+        if self.running and not self.paused:
+            self.paused = True
+            self.matched, self.faces, self.best = [], 0, 0.0
+
+    def resume(self):
+        if self.paused:
+            self.last_seen, self.missing = {}, set()     # the "not seen" timers start again
+            self.started_at = time.time()
+            self.paused = False
 
     def status(self):
         if self.running and self.thread and not self.thread.is_alive():
@@ -189,7 +206,8 @@ class Engine:
                 self.state = "stopped"
         now = time.time()
         return {
-            "running": self.running, "state": self.state, "note": self.note,
+            "running": self.running, "paused": self.paused, "resolution": self.res,
+            "state": self.state, "note": self.note,
             "models_ready": self.models_ready, "people": self.people_count,
             "fps": round(self.fps, 1), "faces": self.faces, "best": round(self.best, 2),
             "matched": list(self.matched), "source": self.source_label,
@@ -248,11 +266,11 @@ class Engine:
             notify.send_async(self.cfg, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
 
     # ---------------------------------------------------------- alerts
-    def _alert(self, name, score, frame, face=None):
+    def _alert(self, name, score, frame, face=None, pics=True):
         stamp = datetime.now()
         snap = ""
         try:
-            if self.cfg["snapshots"]:
+            if self.cfg["snapshots"] and pics:
                 os.makedirs(st.MATCH_DIR, exist_ok=True)
                 snap = f"{name}_{stamp:%Y%m%d_%H%M%S}.jpg"
                 if self.cfg.get("save_full_frame", True):
@@ -318,6 +336,10 @@ class Engine:
             except Exception:
                 pass
             self.state, self.note = "running", base_note
+            try:
+                self.res = f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+            except Exception:
+                self.res = ""
             self.started_at = time.time()    # "not seen" countdown restarts after a reconnect
 
             while not self.stop_event.is_set():
@@ -326,6 +348,17 @@ class Engine:
                     break
                 frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
                 h, w = frame.shape[:2]
+
+                if self.paused:
+                    # no checking, no alerts, and the live picture is not shown
+                    shot = np.full((h, w, 3), 24, dtype=np.uint8)
+                    cv2.putText(shot, "Monitoring paused", (max(w // 2 - 130, 10), h // 2),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (220, 220, 220), 2, cv2.LINE_AA)
+                    tracks.clear()
+                    self.matched, self.faces, self.best = [], 0, 0.0
+                    prev = time.time()
+                    self._publish(shot)
+                    continue
 
                 if self.people_dirty:
                     self.people_dirty = False
@@ -424,9 +457,12 @@ class Engine:
 
                 # regular alerts: again every N seconds while the person stays in view
                 for pname, score in matched.items():
-                    if now_t - last_alert.get(pname, 0) >= self.cfg["alert_interval"]:
+                    since = now_t - last_alert.get(pname, 0)
+                    if since >= self.cfg["alert_interval"]:
                         last_alert[pname] = now_t
-                        self._alert(pname, score, frame, crops.get(pname))
+                        # pictures_once: only the first alert of a visit gets a picture
+                        pics = (not self.cfg.get("pictures_once", False)) or since > visit_gap
+                        self._alert(pname, score, frame, crops.get(pname), pics)
 
                 now = time.time()
                 fps = 0.9 * fps + 0.1 * (1 / max(now - prev, 1e-3))

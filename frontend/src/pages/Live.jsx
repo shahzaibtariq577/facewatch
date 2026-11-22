@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Play, Square, Camera, Users, Gauge, Radio } from "lucide-react";
+import { Play, Square, Pause, Camera, Users, Gauge, Monitor, Activity } from "lucide-react";
 import { api, formatTime, snapshotUrl } from "../api.js";
 
 // One function decides the state, so the chip, the border and the text can never disagree.
@@ -14,6 +14,8 @@ function describe(s, offline) {
       : { tone: "idle", label: "Stopped", text: "Press Start watching to begin." };
   }
   if (s.state === "reconnecting") return { tone: "warn", label: "Reconnecting", text: s.note || "Reconnecting to the camera..." };
+  if (s.paused) return { tone: "warn", label: "Paused", text: "Monitoring is paused. No faces are checked and no alerts are sent. Press Resume to continue." };
+  if (s.state === "starting") return { tone: "idle", label: "Connecting", text: "Connecting to the camera..." };
   if (s.alert_age !== null && s.alert_age < 6 && s.last_alert) {
     return { tone: "alert", label: `Alert: ${s.last_alert.name}`, text: `${s.last_alert.name} detected, similarity ${s.last_alert.score.toFixed(2)}` };
   }
@@ -34,7 +36,7 @@ function Stat({ icon: Icon, label, value }) {
   );
 }
 
-export default function Live({ status, offline, error, streamKey, onToggle }) {
+export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange }) {
   const [feed, setFeed] = useState([]);
   const seq = status?.alert_seq;
   useEffect(() => {
@@ -43,6 +45,8 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
 
   const d = describe(status, offline);
   const running = !!status?.running;
+  const paused = running && !!status?.paused;
+  const mode = settings?.source_mode;
   const inView = running && status.matched?.length ? status.matched[0] : null;
   const lastHit = inView ? feed.find((a) => a.name === inView) : null;
 
@@ -51,6 +55,19 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
       <header className="head">
         <h2>Live</h2>
         <div className="row">
+          {settings && (mode === "webcam" ? (
+            <select aria-label="Camera" value={settings.cam_index} disabled={running}
+                    title={running ? "Stop watching to change the camera" : "Choose the camera"}
+                    onChange={(e) => onChange({ cam_index: +e.target.value })}>
+              {[...new Set([0, 1, 2, 3, settings.cam_index])].sort().map((i) => <option key={i} value={i}>Camera {i}</option>)}
+            </select>
+          ) : <span className="pill">{mode === "video" ? "Video file" : "Network camera"}</span>)}
+          {running && (
+            <button className="btn lv-btn" onClick={onPause}>
+              {paused ? <Play size={16} /> : <Pause size={16} />}
+              {paused ? "Resume" : "Pause"}
+            </button>
+          )}
           <button className={running ? "btn danger lv-btn" : "btn primary lv-btn"} onClick={onToggle}
                   disabled={!status || !status.models_ready}>
             {running ? <Square size={16} /> : <Play size={16} />}
@@ -71,7 +88,7 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
               </span>
               <span className="lv-right">
                 <span className="lv-live lv-src"><Camera size={14} aria-hidden="true" /> {status?.source || "Camera"}</span>
-                {running && <span className="lv-live"><i className="lv-rec" aria-hidden="true" /> REC</span>}
+                {running && !paused && <span className="lv-live"><i className="lv-rec" aria-hidden="true" /> REC</span>}
               </span>
             </div>
             <div className="lv-video">
@@ -81,7 +98,7 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
             </div>
             {running && (
               <div className="lv-bottom">
-                <span>Monitoring active, {status.fps.toFixed(0)} FPS</span>
+                <span>{paused ? "Monitoring paused" : `Monitoring active, ${status.fps.toFixed(0)} FPS`}</span>
                 <span><Users size={14} aria-hidden="true" /> {status.faces} {status.faces === 1 ? "face" : "faces"} detected</span>
               </div>
             )}
@@ -90,7 +107,9 @@ export default function Live({ status, offline, error, streamKey, onToggle }) {
 
           <div className="lv-stats">
             <Stat icon={Gauge} label="Best similarity" value={running ? status.best.toFixed(2) : "-"} />
-            <Stat icon={Camera} label="Source" value={status?.source || "-"} />
+            <Stat icon={Camera} label="Camera" value={status?.source || "-"} />
+            <Stat icon={Monitor} label="Resolution" value={running && status.resolution ? status.resolution : "-"} />
+            <Stat icon={Activity} label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "-"} />
           </div>
           {status?.note && running && <p className="meta">{status.note}</p>}
         </div>

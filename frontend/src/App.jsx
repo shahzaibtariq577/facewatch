@@ -102,6 +102,19 @@ export default function App() {
     }
   };
 
+  const togglePause = async () => {
+    setError("");
+    try {
+      const was = !!status?.paused;
+      if (was) await api.resume();
+      else await api.pause();
+      setStatus(await api.status());
+      toast(was ? "Monitoring resumed" : "Monitoring paused");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   // Optimistic update, then save to the backend after a short pause.
   const pending = useRef({});
   const updateSettings = useCallback((patch) => {
@@ -133,13 +146,14 @@ export default function App() {
         </button>
         <span className={`sys ${offline ? "off" : status?.running ? "on" : ""}`}>
           <i className="lv-dot" aria-hidden="true" />
-          {offline ? "Backend offline" : status?.running ? "Watching" : "System online"}
+          {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v10.0</span>
+        <span className="ver">v11.0</span>
       </nav>
       <main className="main">
         {page === "live" && (
-          <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle} />
+          <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle}
+                onPause={togglePause} settings={settings} onChange={updateSettings} />
         )}
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}

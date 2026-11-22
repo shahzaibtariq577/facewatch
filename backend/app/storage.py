@@ -28,6 +28,7 @@ DEFAULTS = {
     "threshold": 0.50, "alert_interval": 10, "beep": True, "snapshots": True,
     "autostart": True, "auto_reconnect": True,
     "save_full_frame": True, "keep_days": 7,      # keep_days 0 = keep forever
+    "pictures_once": True,       # only the first alert of a visit saves pictures
     "source_mode": "webcam", "cam_index": 0, "url": "", "video_path": "",
     # v6
     "visit_gap": 120,            # seconds away before a return counts as a new visit

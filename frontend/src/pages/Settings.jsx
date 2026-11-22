@@ -70,6 +70,7 @@ export default function Settings({ settings: s, onChange, running }) {
         </label>
         {check("beep", "Play a beep in this browser")}
         {check("snapshots", "Save a snapshot picture with each alert")}
+        {check("pictures_once", "Take only one picture per visit (not at every alert)")}
       </div>
 
       <div className="card setgroup">

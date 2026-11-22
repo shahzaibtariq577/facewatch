@@ -51,7 +51,7 @@ function PersonLink({ name, onOpen }) {
 const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"], [0, "All time"]];
 
 function Delta({ now, prev, days }) {
-  if (prev == null || now == null) return null;
+  if (prev == null || prev === 0 || now == null) return null;
   const label = days === 1 ? "yesterday" : `the previous ${days} days`;
   const diff = now - prev;
   if (diff === 0) return <small className="delta">Same as {label}</small>;
@@ -175,7 +175,7 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
             </ul>
             {health.cpu == null && <p className="muted visits-note">To see CPU and memory, run: pip install psutil</p>}
             <p className="muted visits-note">
-              {health.running ? `Watching at ${Number(health.fps).toFixed(0)} FPS` : "Not watching"} · pictures use {health.pictures_mb} MB · {health.disk_free_gb} GB free on this drive
+              {health.running ? `Watching at ${Number(health.fps).toFixed(0)} FPS` : "Not watching"} {health.app_mb != null ? `· FaceWatch uses ${health.app_mb} MB of memory ` : ""}· pictures use {health.pictures_mb} MB · {health.disk_free_gb} GB free on this drive
             </p>
           </>
         )}

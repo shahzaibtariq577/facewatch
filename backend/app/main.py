@@ -70,6 +70,18 @@ def stop():
     return engine.status()
 
 
+@app.post("/api/pause")
+def pause():
+    engine.pause()
+    return engine.status()
+
+
+@app.post("/api/resume")
+def resume():
+    engine.resume()
+    return engine.status()
+
+
 @app.get("/api/stream")
 def stream():
     if not engine.running:

@@ -33,6 +33,10 @@ def make_router(cfg, engine):
         if psutil:
             out["cpu"] = round(psutil.cpu_percent(None))
             out["ram"] = round(psutil.virtual_memory().percent)
+            try:
+                out["app_mb"] = round(psutil.Process().memory_info().rss / 1048576)
+            except Exception:
+                out["app_mb"] = None
         return out
 
     @r.get("/api/people/{name}/history")

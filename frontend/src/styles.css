@@ -318,3 +318,6 @@ p.gate { text-align: center; }
 .linkbtn { background: none; border: 0; padding: 0; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-align: left; }
 .linkbtn:hover { color: var(--teal); }
 @media (max-width: 700px) { .pgrid { grid-template-columns: 1fr; } }
+/* v12: Live page camera selector and pause (append at the very end of styles.css) */
+.head .row select { min-height: 40px; padding: 8px 10px; }
+.head .row select:disabled { opacity: .6; cursor: not-allowed; }
