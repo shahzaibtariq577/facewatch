@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, Settings as Cog, Moon, Sun } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Settings as Cog, Moon, Sun } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import People from "./pages/People.jsx";
+import Unknown from "./pages/Unknown.jsx";
 import Settings from "./pages/Settings.jsx";
 
 const PAGES = [
   ["live", "Live", Video],
   ["dashboard", "Dashboard", LayoutDashboard],
   ["people", "People", Users],
+  ["unknown", "Not recognised", UserX],
   ["settings", "Settings", Cog],
 ];
 
@@ -23,6 +25,7 @@ export default function App() {
   const [streamKey, setStreamKey] = useState(0);
   const [unseen, setUnseen] = useState(0);
   const [focus, setFocus] = useState(null);
+  const [unknownNew, setUnknownNew] = useState(0);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
   });
@@ -69,6 +72,19 @@ export default function App() {
       if (pageRef.current !== "dashboard") setUnseen((n) => n + 1);
     }
   }, [status?.alert_seq]);
+
+  // "Not recognised" events: refresh the count when a new one is saved.
+  const refreshUnknown = useCallback(() => {
+    api.unknown(1).then((u) => setUnknownNew(u.new)).catch(() => {});
+  }, []);
+  const unkRef = useRef(null);
+  useEffect(() => {
+    if (!status) return;
+    const n = status.unknown_seq ?? 0;
+    if (unkRef.current !== null && n > unkRef.current) toast("A face was not recognised", "warn");
+    unkRef.current = n;
+    refreshUnknown();
+  }, [status?.unknown_seq]);
 
   // The backend may start watching by itself (auto start): refresh the video stream when it does.
   const wasRunning = useRef(false);
@@ -138,6 +154,7 @@ export default function App() {
                   aria-current={page === key ? "page" : undefined} onClick={() => open(key)}>
             <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
             {key === "dashboard" && unseen > 0 && <span className="badge">{unseen}</span>}
+            {key === "unknown" && unknownNew > 0 && <span className="badge">{unknownNew}</span>}
           </button>
         ))}
         <button className="nav theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -148,7 +165,7 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v11.0</span>
+        <span className="ver">v12.0</span>
       </nav>
       <main className="main">
         {page === "live" && (
@@ -157,6 +174,7 @@ export default function App() {
         )}
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
+        {page === "unknown" && <Unknown onChanged={refreshUnknown} />}
         {page === "settings" && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
         )}

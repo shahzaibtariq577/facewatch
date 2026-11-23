@@ -49,9 +49,14 @@ export const api = {
   deletePictures: () => req("/api/snapshots", { method: "DELETE" }),
   clearAlerts: () => req("/api/alerts", { method: "DELETE" }),
   testNotify: () => req("/api/notify/test", { method: "POST" }),
+  unknown: (limit = 100) => req(`/api/unknown?limit=${limit}`),
+  dismissUnknown: (id) => req(`/api/unknown/${enc(id)}/dismiss`, { method: "POST" }),
+  deleteUnknown: (id) => req(`/api/unknown/${enc(id)}`, { method: "DELETE" }),
+  addUnknownAsPerson: (id, name) => req(`/api/unknown/${enc(id)}/add-person`, send("POST", { name })),
 };
 
 export const thumbUrl = (name, v = 0) => `/api/people/${enc(name)}/thumb?v=${v}`;
+export const unknownUrl = (id, kind = "face") => `/api/unknown/${enc(id)}/image?kind=${kind}`;
 export const snapshotUrl = (file) => `/snapshots/${enc(file)}`;
 
 export function formatTime(t, withDate = true) {

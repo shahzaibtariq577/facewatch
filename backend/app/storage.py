@@ -7,7 +7,7 @@ import shutil
 import threading
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import cv2
 import numpy as np
@@ -17,6 +17,8 @@ DATA_DIR = os.environ.get(
 MODEL_DIR = os.path.join(DATA_DIR, "models")
 PEOPLE_DIR = os.path.join(DATA_DIR, "people")
 MATCH_DIR = os.path.join(DATA_DIR, "matches")
+UNKNOWN_DIR = os.path.join(DATA_DIR, "unknown")        # v12: faces that were not recognised
+UNKNOWN_FILE = os.path.join(DATA_DIR, "unknown.json")
 LOG_FILE = os.path.join(DATA_DIR, "match_log.csv")
 CONFIG_FILE = os.path.join(DATA_DIR, "settings.json")
 
@@ -36,6 +38,9 @@ DEFAULTS = {
     "ntfy_topic": "", "ntfy_server": "https://ntfy.sh",
     "telegram_token": "", "telegram_chat": "",
     "notify_on_match": True, "notify_on_missing": True, "notify_send_photo": True,
+    # v12 (Phase 2A)
+    "unknown_events": True,      # save a "Not recognised" event when an unknown face stays in view
+    "unknown_gap": 60,           # seconds to wait before the next "Not recognised" event
 }
 _TYPES = {k: type(v) for k, v in DEFAULTS.items()}
 
@@ -51,7 +56,7 @@ _lock = threading.Lock()
 
 
 def init_dirs():
-    for d in (DATA_DIR, MODEL_DIR, PEOPLE_DIR, MATCH_DIR):
+    for d in (DATA_DIR, MODEL_DIR, PEOPLE_DIR, MATCH_DIR, UNKNOWN_DIR):
         os.makedirs(d, exist_ok=True)
 
 
@@ -323,3 +328,119 @@ def build_visits(rows, gap_seconds):
         if snap and os.path.exists(os.path.join(MATCH_DIR, FACE_PREFIX + snap)):
             v["face"] = FACE_PREFIX + snap
     return visits
+
+
+# ------------------------------------------- v12: "Not recognised" events
+MAX_UNKNOWN = 500          # oldest events (and their pictures) are removed after this many
+
+
+def _read_unknown_raw():
+    try:
+        with open(UNKNOWN_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_unknown_raw(items):
+    init_dirs()
+    tmp = UNKNOWN_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f)
+    os.replace(tmp, UNKNOWN_FILE)
+
+
+def _unknown_files(uid):
+    return [os.path.join(UNKNOWN_DIR, uid + ".jpg"), os.path.join(UNKNOWN_DIR, uid + "_full.jpg")]
+
+
+def _remove_unknown_files(uid):
+    for p in _unknown_files(uid):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def read_unknown():
+    """All 'Not recognised' events, newest first."""
+    with _lock:
+        items = _read_unknown_raw()
+    return sorted(items, key=lambda x: x.get("time", ""), reverse=True)
+
+
+def add_unknown(stamp, face_img, frame, score, source, save_full=True):
+    """Save one 'Not recognised' event: a face close-up, optionally the full picture."""
+    init_dirs()
+    uid = "unk_" + stamp.strftime("%Y%m%d_%H%M%S_") + f"{stamp.microsecond // 1000:03d}"
+    has_face = has_full = False
+    if face_img is not None and face_img.size:
+        has_face = bool(write_image(os.path.join(UNKNOWN_DIR, uid + ".jpg"), face_img, 88))
+    if save_full and frame is not None:
+        has_full = bool(write_image(os.path.join(UNKNOWN_DIR, uid + "_full.jpg"), frame, 75))
+    item = {"id": uid, "time": stamp.strftime(TIME_FMT), "score": round(float(score), 2),
+            "source": source, "status": "new", "face": has_face, "full": has_full, "person": ""}
+    with _lock:
+        items = _read_unknown_raw()
+        items.append(item)
+        items.sort(key=lambda x: x.get("time", ""))
+        while len(items) > MAX_UNKNOWN:
+            _remove_unknown_files(items.pop(0)["id"])
+        _write_unknown_raw(items)
+    return item
+
+
+def set_unknown_status(uid, status, person=""):
+    with _lock:
+        items = _read_unknown_raw()
+        for x in items:
+            if x.get("id") == uid:
+                x["status"] = status
+                x["person"] = person
+                _write_unknown_raw(items)
+                return True
+    return False
+
+
+def get_unknown(uid):
+    with _lock:
+        for x in _read_unknown_raw():
+            if x.get("id") == uid:
+                return x
+    return None
+
+
+def delete_unknown(uid):
+    with _lock:
+        items = _read_unknown_raw()
+        keep = [x for x in items if x.get("id") != uid]
+        if len(keep) == len(items):
+            return False
+        _write_unknown_raw(keep)
+    _remove_unknown_files(uid)
+    return True
+
+
+def unknown_path(uid, kind):
+    """Path of the picture file, or None. Only ids that exist in the list are accepted."""
+    if not get_unknown(uid):
+        return None
+    path = _unknown_files(uid)[1 if kind == "full" else 0]
+    return path if os.path.exists(path) else None
+
+
+def cleanup_unknown(days):
+    """Delete 'Not recognised' events older than `days` days. 0 means keep everything."""
+    if not days:
+        return 0
+    cutoff = (datetime.now() - timedelta(days=days)).strftime(TIME_FMT)
+    with _lock:
+        items = _read_unknown_raw()
+        old = [x for x in items if x.get("time", "") < cutoff]
+        if not old:
+            return 0
+        _write_unknown_raw([x for x in items if x.get("time", "") >= cutoff])
+    for x in old:
+        _remove_unknown_files(x["id"])
+    return len(old)

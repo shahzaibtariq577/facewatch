@@ -35,6 +35,7 @@ async def lifespan(_app):
     def janitor():                      # delete old pictures now and then every hour
         while True:
             st.cleanup_matches(cfg.get("keep_days", 0))
+            st.cleanup_unknown(cfg.get("keep_days", 0))
             time.sleep(3600)
     threading.Thread(target=boot, daemon=True).start()
     threading.Thread(target=janitor, daemon=True).start()
@@ -219,6 +220,74 @@ def thumb(name: str):
     if data is None:
         raise HTTPException(404, "No photo.")
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+# ----------------------------------------------- "Not recognised" events
+def _unk(x):
+    return {"id": x["id"], "time": x["time"], "score": x.get("score", 0), "source": x.get("source", ""),
+            "status": x.get("status", "new"), "person": x.get("person", ""),
+            "face": bool(x.get("face")), "full": bool(x.get("full"))}
+
+
+@app.get("/api/unknown")
+def unknown_list(limit: int = 100):
+    items = st.read_unknown()
+    return {"new": sum(1 for x in items if x.get("status", "new") == "new"),
+            "total": len(items),
+            "items": [_unk(x) for x in items[:max(1, min(limit, 500))]]}
+
+
+@app.get("/api/unknown/{uid}/image")
+def unknown_image(uid: str, kind: str = "face"):
+    path = st.unknown_path(uid, "full" if kind == "full" else "face")
+    if not path:
+        raise HTTPException(404, "No picture.")
+    return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/unknown/{uid}/dismiss")
+def unknown_dismiss(uid: str):
+    if not st.set_unknown_status(uid, "dismissed"):
+        raise HTTPException(404, "Event not found.")
+    return {"ok": True}
+
+
+@app.delete("/api/unknown/{uid}", status_code=204)
+def unknown_delete(uid: str):
+    if not st.delete_unknown(uid):
+        raise HTTPException(404, "Event not found.")
+    return Response(status_code=204)
+
+
+@app.post("/api/unknown/{uid}/add-person", status_code=201)
+def unknown_add_person(uid: str, payload: dict = Body(...)):
+    """Make a saved person from the face close-up of an event."""
+    item = st.get_unknown(uid)
+    path = st.unknown_path(uid, "face")
+    if not item or not path:
+        raise HTTPException(404, "This event has no face picture.")
+    clean = st.safe_name(str(payload.get("name", "")))
+    if not clean:
+        raise HTTPException(400, "Please use letters or numbers in the name.")
+    clean = st.find_person(clean) or clean
+    img = st.read_image(path)
+    if img is None:
+        raise HTTPException(400, "Could not read the picture.")
+    note = ""
+    if engine.models_ready:
+        try:
+            usable, msg = check_photo(img)
+        except Exception:
+            usable, msg = True, ""
+        if not usable:
+            raise HTTPException(400, "No clear face found in this picture, so it was not added.")
+        note = msg
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    if not ok or not st.add_photos(clean, [buf.tobytes()]):
+        raise HTTPException(400, "Could not save the photo.")
+    st.set_unknown_status(uid, "added", clean)
+    _changed()
+    return {"name": clean, "note": note}
 
 
 # ------------------------------------------------------------------ alerts

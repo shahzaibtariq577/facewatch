@@ -4,6 +4,7 @@ Only faces are compared, so clothing and background are ignored. Scores are
 averaged over the last few frames so a single odd frame cannot raise an alert.
 
 v6: visits, "not seen" notices, Telegram alerts, photo quality check.
+v12: "Not recognised" events (a face that stays in view and matches nobody).
 """
 import os
 import re
@@ -23,6 +24,8 @@ MAX_FACES = 6         # max faces scored per frame
 SMOOTH_FRAMES = 7     # scores are averaged over this many frames
 MIN_FRAMES = 3        # a face needs this many scores before it can match
 LOST_AFTER = 10       # forget a face after this many frames without it
+UNKNOWN_AFTER = 15    # an unmatched face must stay in view this many frames before it is saved
+UNKNOWN_MIN_FACE = 50 # ignore very small faces (pixels, on the 640 wide picture)
 
 
 class StartError(Exception):
@@ -107,6 +110,8 @@ class Engine:
         self.paused = False                # watching is on, but nobody is checked
         self.res = ""                      # camera picture size, e.g. 1280x720
 
+        self.unknown_seq = 0               # goes up each time a "Not recognised" event is saved
+        self.last_unknown_ts = 0.0
         self.alert_seq = 0
         self.last_alert = None
         self.last_alert_ts = 0.0
@@ -216,6 +221,7 @@ class Engine:
             "missing": sorted(self.missing),
             "events": list(self.events)[-8:][::-1],      # newest first
             "event_seq": self.event_seq,
+            "unknown_seq": self.unknown_seq,
             "notify_error": notify.last_error,
         }
 
@@ -264,6 +270,18 @@ class Engine:
         self._event("missing", name, f"{name} has not been seen for {minutes} minutes.")
         if self.cfg.get("notify_on_missing"):
             notify.send_async(self.cfg, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
+
+    # ---------------------------------------------------------- unknown
+    def _unknown(self, score, frame, face):
+        """Save a 'Not recognised' event. This is only a note that a face did not match
+        anyone saved. It does not say who the person is or that anything is wrong."""
+        try:
+            st.add_unknown(datetime.now(), face, frame, score, self.source_label,
+                           save_full=bool(self.cfg.get("save_full_frame", True)))
+            self.unknown_seq += 1
+            self._event("unknown", "", "A face was not recognised. Review it on the Not recognised page.")
+        except Exception as e:
+            self.note = f"Could not save a Not recognised event: {e}"
 
     # ---------------------------------------------------------- alerts
     def _alert(self, name, score, frame, face=None, pics=True):
@@ -371,6 +389,7 @@ class Engine:
                 detector.setInputSize((w, h))
                 _, faces = detector.detect(frame)
                 matched, crops, best, used, n_faces = {}, {}, 0.0, set(), 0
+                unknown_new = []
                 frame_no += 1
 
                 if faces is not None:
@@ -391,10 +410,11 @@ class Engine:
                         if tid is None:
                             tid = next_id
                             next_id += 1
-                            tracks[tid] = {"scores": {}}
+                            tracks[tid] = {"scores": {}, "age": 0, "known": False, "unk": False}
                         used.add(tid)
                         t = tracks[tid]
                         t["cx"], t["cy"], t["seen"] = cx, cy, frame_no
+                        t["age"] += 1
 
                         if refs:
                             try:
@@ -418,6 +438,7 @@ class Engine:
                         if best_avg is not None:
                             best = max(best, best_avg)
                         if is_match:
+                            t["known"] = True
                             if best_avg >= matched.get(best_name, 0.0):
                                 # clean close-up of the face (taken before the boxes are drawn)
                                 mx, my = int(fw * 0.4), int(fh * 0.4)
@@ -427,6 +448,14 @@ class Engine:
                             draw_corners(frame, x, y, fw, fh, GREEN)
                             draw_tag(frame, f"{best_name}  {best_avg:.2f}", x, y, GREEN)
                         else:
+                            # a face that stays in view and matches nobody: remember it (clean close-up,
+                            # taken before the boxes are drawn)
+                            if (self.cfg.get("unknown_events", True) and not t["known"] and not t["unk"]
+                                    and t["age"] >= UNKNOWN_AFTER and best_n >= MIN_FRAMES
+                                    and min(fw, fh) >= UNKNOWN_MIN_FACE):
+                                mx, my = int(fw * 0.4), int(fh * 0.4)
+                                unknown_new.append((t, best_avg, frame[max(y - my, 0):min(y + fh + my, h),
+                                                                       max(x - mx, 0):min(x + fw + mx, w)].copy()))
                             draw_corners(frame, x, y, fw, fh, AMBER, 2)
                             tag = f"No match  {best_avg:.2f}" if best_avg is not None else "Checking..."
                             draw_tag(frame, tag, x, y, AMBER, (255, 255, 255))
@@ -435,6 +464,13 @@ class Engine:
                     del tracks[t_id]
 
                 now_t = time.time()
+
+                # "Not recognised" events (one per face, and not more often than unknown_gap seconds)
+                if unknown_new and now_t - self.last_unknown_ts >= self.cfg.get("unknown_gap", 60):
+                    self.last_unknown_ts = now_t
+                    for ut, uscore, ucrop in unknown_new:
+                        ut["unk"] = True
+                        self._unknown(uscore, frame, ucrop)
 
                 # visits: a person back after more than the gap starts a new visit
                 visit_gap = max(self.cfg.get("visit_gap", 120), 2 * self.cfg["alert_interval"])

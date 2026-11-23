@@ -25,7 +25,7 @@ function describe(s, offline) {
   return { tone: "idle", label: "Watching", text: "Watching. No face in view." };
 }
 
-const ICON = { visit: "➜", missing: "!", back: "✓" };
+const ICON = { visit: "➜", missing: "!", back: "✓", unknown: "?" };
 
 function Stat({ icon: Icon, label, value }) {
   return (
