@@ -55,12 +55,15 @@ export const api = {
   notifications: (category = "", limit = 200) => req(`/api/notifications?category=${enc(category)}&limit=${limit}`),
   readNotifications: (category = "") => req(`/api/notifications/read?category=${enc(category)}`, { method: "POST" }),
   clearNotifications: () => req("/api/notifications", { method: "DELETE" }),
+  report: (date = "") => req(`/api/report?date=${date}`),
+  sendReport: (date = "") => req(`/api/report/send?date=${date}`, { method: "POST" }),
   unknown: (limit = 100) => req(`/api/unknown?limit=${limit}`),
   dismissUnknown: (id) => req(`/api/unknown/${enc(id)}/dismiss`, { method: "POST" }),
   deleteUnknown: (id) => req(`/api/unknown/${enc(id)}`, { method: "DELETE" }),
   addUnknownAsPerson: (id, name) => req(`/api/unknown/${enc(id)}/add-person`, send("POST", { name })),
 };
 
+export const reportCsvUrl = (date = "") => `/api/report/export?date=${date}`;
 export const thumbUrl = (name, v = 0) => `/api/people/${enc(name)}/thumb?v=${v}`;
 export const unknownUrl = (id, kind = "face") => `/api/unknown/${enc(id)}/image?kind=${kind}`;
 export const snapshotUrl = (file) => `/snapshots/${enc(file)}`;

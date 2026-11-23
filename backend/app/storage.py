@@ -43,6 +43,9 @@ DEFAULTS = {
     "unknown_events": True,      # save a "Not recognised" event when an unknown face stays in view
     "unknown_gap": 60,           # seconds to wait before the next "Not recognised" event
     "notify_on_unknown": True,   # send a phone alert (ntfy) for a "Not recognised" event
+    "daily_summary": False,      # send an end-of-day summary to the phone
+    "daily_summary_time": "18:00",
+    "daily_summary_last": "",    # date the last summary was sent (so it is sent once a day)
 }
 _TYPES = {k: type(v) for k, v in DEFAULTS.items()}
 
@@ -90,6 +93,8 @@ def clean_settings(patch):
             out[k] = v.strip()
     if out.get("source_mode") not in (None, "webcam", "video", "network"):
         del out["source_mode"]
+    if "daily_summary_time" in out and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", out["daily_summary_time"]):
+        del out["daily_summary_time"]
     if "ntfy_topic" in out:
         out["ntfy_topic"] = re.sub(r"[^A-Za-z0-9_-]", "", out["ntfy_topic"])[:64]
     if "ntfy_server" in out:

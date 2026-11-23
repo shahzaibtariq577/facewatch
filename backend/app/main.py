@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import notify
 from . import storage as st
 from .engine import Engine, StartError, check_photo
+from . import report
 from .extras import make_router
 
 st.init_dirs()
@@ -39,6 +40,7 @@ async def lifespan(_app):
             time.sleep(3600)
     threading.Thread(target=boot, daemon=True).start()
     threading.Thread(target=janitor, daemon=True).start()
+    report.start(cfg)
     yield
     engine.stop()
     st.save_settings(cfg)

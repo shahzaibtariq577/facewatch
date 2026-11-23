@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Bell, Settings as Cog, Moon, Sun } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, FileText, Activity, Settings as Cog, Moon, Sun } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
@@ -7,6 +7,8 @@ import Dashboard from "./pages/Dashboard.jsx";
 import People from "./pages/People.jsx";
 import Unknown from "./pages/Unknown.jsx";
 import Notifications from "./pages/Notifications.jsx";
+import Reports from "./pages/Reports.jsx";
+import Health from "./pages/Health.jsx";
 import Settings from "./pages/Settings.jsx";
 
 const PAGES = [
@@ -15,6 +17,8 @@ const PAGES = [
   ["people", "People", Users],
   ["unknown", "Not recognised", UserX],
   ["notifications", "Notifications", Bell],
+  ["reports", "Reports", FileText],
+  ["health", "System health", Activity],
   ["settings", "Settings", Cog],
 ];
 
@@ -175,7 +179,7 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v12.0</span>
+        <span className="ver">v13.0</span>
       </nav>
       <main className="main">
         {page === "live" && (
@@ -186,6 +190,8 @@ export default function App() {
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
         {page === "unknown" && <Unknown onChanged={refreshUnknown} />}
         {page === "notifications" && <Notifications onChanged={refreshNotif} onOpenPage={open} onOpenPerson={openPerson} />}
+        {page === "reports" && <Reports onOpenPerson={openPerson} />}
+        {page === "health" && <Health />}
         {page === "settings" && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
         )}
