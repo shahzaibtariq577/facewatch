@@ -36,7 +36,7 @@ function Stat({ icon: Icon, label, value }) {
   );
 }
 
-export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange }) {
+export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange, readOnly }) {
   const [feed, setFeed] = useState([]);
   const seq = status?.alert_seq;
   useEffect(() => {
@@ -56,23 +56,25 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
         <h2>Live</h2>
         <div className="row">
           {settings && (mode === "webcam" ? (
-            <select aria-label="Camera" value={settings.cam_index} disabled={running}
+            <select aria-label="Camera" value={settings.cam_index} disabled={running || readOnly}
                     title={running ? "Stop watching to change the camera" : "Choose the camera"}
                     onChange={(e) => onChange({ cam_index: +e.target.value })}>
               {[...new Set([0, 1, 2, 3, settings.cam_index])].sort().map((i) => <option key={i} value={i}>Camera {i}</option>)}
             </select>
           ) : <span className="pill">{mode === "video" ? "Video file" : "Network camera"}</span>)}
-          {running && (
+          {running && !readOnly && (
             <button className="btn lv-btn" onClick={onPause}>
               {paused ? <Play size={16} /> : <Pause size={16} />}
               {paused ? "Resume" : "Pause"}
             </button>
           )}
-          <button className={running ? "btn danger lv-btn" : "btn primary lv-btn"} onClick={onToggle}
-                  disabled={!status || !status.models_ready}>
-            {running ? <Square size={16} /> : <Play size={16} />}
-            {running ? "Stop" : "Start watching"}
-          </button>
+          {!readOnly && (
+            <button className={running ? "btn danger lv-btn" : "btn primary lv-btn"} onClick={onToggle}
+                    disabled={!status || !status.models_ready}>
+              {running ? <Square size={16} /> : <Play size={16} />}
+              {running ? "Stop" : "Start watching"}
+            </button>
+          )}
         </div>
       </header>
       {error && <p className="note error" role="alert">{error}</p>}

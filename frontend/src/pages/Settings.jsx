@@ -7,6 +7,8 @@ const GAPS = [[60, "1 minute"], [120, "2 minutes"], [300, "5 minutes"], [600, "1
 const NOT_SEEN = [[0, "Off"], [5, "5 minutes"], [15, "15 minutes"], [30, "30 minutes"],
                   [60, "1 hour"], [180, "3 hours"]];
 
+const UNKNOWN_GAPS = [[30, "30 seconds"], [60, "1 minute"], [120, "2 minutes"], [300, "5 minutes"], [600, "10 minutes"]];
+
 const cleanTopic = (v) => v.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
 const randomTopic = () => {
   const a = new Uint8Array(8);
@@ -107,6 +109,27 @@ export default function Settings({ settings: s, onChange, running }) {
           <span className="muted">{testMsg}</span>
         </div>
         <p className="muted">The test goes to every channel that is filled in (ntfy and/or Telegram).</p>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Not recognised faces</h3>
+        {check("unknown_events", "Save an event when a face stays in view and matches nobody")}
+        {check("notify_on_unknown", "Send a phone alert for these events")}
+        <label>Wait this long before the next event
+          <select value={s.unknown_gap} onChange={(e) => onChange({ unknown_gap: +e.target.value })}>
+            {UNKNOWN_GAPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div className="card setgroup">
+        <h3>Daily summary</h3>
+        {check("daily_summary", "Send an end-of-day summary to the phone")}
+        <label>Send after
+          <input type="time" value={s.daily_summary_time || "18:00"}
+                 onChange={(e) => { if (e.target.value) onChange({ daily_summary_time: e.target.value }); }} />
+        </label>
+        <p className="muted">Sent once a day through ntfy or Telegram, and only while the backend is running. To test it now, use "Send now" on the Reports page.</p>
       </div>
 
       <div className="card setgroup">

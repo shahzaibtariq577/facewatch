@@ -41,12 +41,30 @@ export const api = {
   addPerson: (name, files) => req("/api/people", form(name, files)),
   addPhotos: (name, files) => req(`/api/people/${enc(name)}/photos`, form(null, files)),
   removePerson: (name) => req(`/api/people/${enc(name)}`, { method: "DELETE" }),
+  consent: () => req("/api/consent"),
+  audit: (category = "", from = "", to = "") =>
+    req(`/api/audit?category=${enc(category)}&date_from=${from}&date_to=${to}`),
+  setConsent: (name, consent) => req(`/api/people/${enc(name)}/consent`, send("PUT", { consent })),
+  renamePerson: (name, newName) => req(`/api/people/${enc(name)}/rename`, send("POST", { new_name: newName })),
+  deletePersonData: (name) => req(`/api/people/${enc(name)}/data`, { method: "DELETE" }),
+  users: () => req("/api/users"),
+  addUser: (username, password, role) => req("/api/users", send("POST", { username, password, role })),
+  updateUser: (username, patch) => req(`/api/users/${enc(username)}`, send("PUT", patch)),
+  deleteUser: (username) => req(`/api/users/${enc(username)}`, { method: "DELETE" }),
+  changePassword: (current_password, new_password) => req("/api/auth/password", send("POST", { current_password, new_password })),
+  logout: () => req("/api/auth/logout", { method: "POST" }),
   alerts: (limit = 15) => req(`/api/alerts?limit=${limit}`),
   dashboard: (days = 0, from = "", to = "") =>
     req(`/api/dashboard?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}`),
   analytics: (days = 0, from = "", to = "") =>
     req(`/api/analytics?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}`),
   health: () => req("/api/health"),
+  attendance: (from, to, dept = "") =>
+    req(`/api/attendance?date_from=${from}&date_to=${to}&department=${enc(dept)}`),
+  attendanceConfig: () => req("/api/attendance/config"),
+  saveAttendanceConfig: (c) => req("/api/attendance/config", send("PUT", {
+    grace: c.grace, workdays: c.workdays, shifts: c.shifts, departments: c.departments })),
+  setAttendancePerson: (name, department, shift) => req("/api/attendance/person", send("PUT", { name, department, shift })),
   quiet: () => req("/api/quiet"),
   setQuiet: (scope, hours, name = "") => req("/api/quiet", send("POST", { scope, hours, name })),
   clearQuiet: (scope, name = "") => req(`/api/quiet?scope=${scope}&name=${enc(name)}`, { method: "DELETE" }),
@@ -66,6 +84,10 @@ export const api = {
   addUnknownAsPerson: (id, name) => req(`/api/unknown/${enc(id)}/add-person`, send("POST", { name })),
 };
 
+export const attendanceCsvUrl = (from, to, dept = "") =>
+  `/api/attendance/export?date_from=${from}&date_to=${to}&department=${enc(dept)}`;
+export const auditCsvUrl = (category = "", from = "", to = "") =>
+  `/api/audit/export?category=${enc(category)}&date_from=${from}&date_to=${to}`;
 export const reportCsvUrl = (date = "") => `/api/report/export?date=${date}`;
 export const thumbUrl = (name, v = 0) => `/api/people/${enc(name)}/thumb?v=${v}`;
 export const unknownUrl = (id, kind = "face") => `/api/unknown/${enc(id)}/image?kind=${kind}`;

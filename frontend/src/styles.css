@@ -415,3 +415,40 @@ p.gate { text-align: center; }
 .qt-list li:last-child { border-bottom: 0; }
 .badge.on { background: var(--amber); }
 [data-theme="dark"] .qt-on { color: #f0c870; }
+/* Attendance (2G) */
+.at-block { margin-bottom: 14px; }
+.at-block h3 { margin-bottom: 10px; }
+.at-row { margin-bottom: 8px; }
+.at-scroll { overflow-x: auto; }
+.at-link { background: none; border: 0; padding: 0; color: var(--teal); font-weight: 600; cursor: pointer; text-align: left; }
+.at-link:hover { text-decoration: underline; }
+.at-sel td { background: #e6f0f1; }
+.at-tag { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #e3f3ea; color: var(--match); white-space: nowrap; }
+.at-tag.late, .at-tag.pending { background: #fff6e0; color: var(--amber); }
+.at-tag.absent { background: #fde8e4; color: var(--alert); }
+.at-tag.off, .at-tag.upcoming { background: var(--fog); color: var(--muted); }
+.at-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--fog); border: 1px solid var(--line); border-radius: 999px; padding: 3px 4px 3px 12px; font-weight: 600; }
+.at-chip button { border: 0; background: none; cursor: pointer; font-size: 16px; line-height: 1; padding: 0 6px; color: var(--muted); }
+[data-theme="dark"] .at-sel td { background: #17303a; }
+[data-theme="dark"] .at-tag { background: #14301f; }
+[data-theme="dark"] .at-tag.late, [data-theme="dark"] .at-tag.pending { background: #3a2f12; color: #f0c870; }
+[data-theme="dark"] .at-tag.absent { background: #3d1c17; color: #ff9a8a; }
+[data-theme="dark"] input[type=time], [data-theme="dark"] input[type=date], [data-theme="dark"] input[type=number] { background: #0f1a23; border-color: var(--line); }
+input[type=time], input[type=date], input[type=number] { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+/* v16 (3A): consent and privacy */
+.pconsent { color: var(--muted); font-size: 13px; margin: 0; }
+.pconsent.no { color: var(--amber); }
+.pact + .pact { margin-top: 0; }
+.btn.danger { background: var(--alert); border-color: var(--alert); color: #fff; }
+.addform .agree { flex-basis: 100%; }
+/* v17 (3B): audit log */
+.au-fail { color: var(--alert); }
+/* v18 (3C): users and roles */
+.whoami { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; font-size: 0.85rem; color: var(--muted); }
+.whoami b { color: var(--ink); }
+.whoami .btn { align-self: flex-start; margin-top: 6px; }
+/* A viewer cannot change anything, so hide the change buttons that are easy to hide.
+   The server refuses the changes anyway. */
+html[data-role="viewer"] .addform:not(.keep),
+html[data-role="viewer"] .pact + .pact { display: none; }
+html[data-role="viewer"] .pact button:not(:first-child) { display: none; }

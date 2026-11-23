@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Bell, FileText, Activity, BellOff, Settings as Cog, Moon, Sun } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, FileText, CalendarCheck, Activity, BellOff, Settings as Cog, Moon, Sun, ClipboardList, UserCog, KeyRound } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
@@ -10,7 +10,12 @@ import Notifications from "./pages/Notifications.jsx";
 import Reports from "./pages/Reports.jsx";
 import Health from "./pages/Health.jsx";
 import Quiet from "./pages/Quiet.jsx";
+import Attendance from "./pages/Attendance.jsx";
+import Audit from "./pages/Audit.jsx";
 import Settings from "./pages/Settings.jsx";
+import UsersPage from "./pages/Users.jsx";
+import Account from "./pages/Account.jsx";
+import { useAuth } from "./Gate.jsx";
 
 const PAGES = [
   ["live", "Live", Video],
@@ -19,12 +24,19 @@ const PAGES = [
   ["unknown", "Not recognised", UserX],
   ["notifications", "Notifications", Bell],
   ["reports", "Reports", FileText],
+  ["attendance", "Attendance", CalendarCheck],
   ["quiet", "Ignore", BellOff],
   ["health", "System health", Activity],
+  ["audit", "Audit log", ClipboardList],
   ["settings", "Settings", Cog],
+  ["users", "Users", UserCog],
+  ["account", "My account", KeyRound],
 ];
+const ADMIN_ONLY = ["quiet", "audit", "settings", "users"];
 
 export default function App() {
+  const { user, role } = useAuth();
+  const admin = role === "admin";
   const [page, setPage] = useState("live");
   const [status, setStatus] = useState(null);
   const [offline, setOffline] = useState(false);
@@ -43,6 +55,7 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem("fw-theme", theme); } catch { /* storage blocked */ }
   }, [theme]);
+  useEffect(() => { document.documentElement.dataset.role = admin ? "admin" : "viewer"; }, [admin]);
   const toast = useToast();
   const pageRef = useRef(page);
   const settingsRef = useRef(settings);
@@ -130,6 +143,10 @@ export default function App() {
     if (key === "dashboard") setUnseen(0);
   };
   const openPerson = (name) => { setFocus(name); open("people"); };
+  const logout = async () => {
+    try { await api.logout(); } catch { /* already logged out */ }
+    window.dispatchEvent(new Event("fw-logout"));
+  };
 
   const toggle = async () => {
     setError("");
@@ -173,7 +190,7 @@ export default function App() {
       <nav className="side" aria-label="Main">
         <h1 className="brand">FaceWatch</h1>
         <p className="tagline">Real-time face watcher</p>
-        {PAGES.map(([key, label, Icon]) => (
+        {PAGES.filter(([k]) => admin || !ADMIN_ONLY.includes(k)).map(([key, label, Icon]) => (
           <button key={key} className={`nav ${page === key ? "on" : ""}`}
                   aria-current={page === key ? "page" : undefined} onClick={() => open(key)}>
             <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
@@ -183,6 +200,10 @@ export default function App() {
             {key === "notifications" && notifUnread > 0 && <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
           </button>
         ))}
+        <div className="whoami">
+          <span>Signed in as <b>{user}</b> ({admin ? "admin" : "viewer"})</span>
+          <button className="btn" onClick={logout}>Log out</button>
+        </div>
         <button className="nav theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
                 aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
           <span className="nav-l">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span className="t-l">{theme === "dark" ? "Light mode" : "Dark mode"}</span></span>
@@ -191,21 +212,26 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v14.0</span>
+        <span className="ver">v18.0</span>
       </nav>
       <main className="main">
+        {!admin && <p className="note" role="status">View-only account: you can look at everything here, but not change it.</p>}
         {page === "live" && (
           <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle}
-                onPause={togglePause} settings={settings} onChange={updateSettings} />
+                onPause={togglePause} settings={settings} onChange={updateSettings} readOnly={!admin} />
         )}
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
         {page === "unknown" && <Unknown onChanged={refreshUnknown} />}
         {page === "notifications" && <Notifications onChanged={refreshNotif} onOpenPage={open} onOpenPerson={openPerson} />}
         {page === "reports" && <Reports onOpenPerson={openPerson} />}
+        {page === "attendance" && <Attendance />}
         {page === "quiet" && <Quiet onChanged={refreshQuiet} />}
         {page === "health" && <Health />}
-        {page === "settings" && settings && (
+        {page === "audit" && admin && <Audit />}
+        {page === "users" && admin && <UsersPage />}
+        {page === "account" && <Account />}
+        {page === "settings" && admin && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
         )}
       </main>

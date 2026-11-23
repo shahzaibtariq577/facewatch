@@ -17,6 +17,9 @@ export default function People({ focus, onFocusDone }) {
   const [open, setOpen] = useState(null);
   const [hist, setHist] = useState(null);
   const [q, setQ] = useState("");
+  const [consent, setConsent] = useState({});
+  const [agreed, setAgreed] = useState(false);
+  const [delMsg, setDelMsg] = useState("");
   const toast = useToast();
   const addTo = useRef(null);
   const picker = useRef(null);
@@ -27,6 +30,11 @@ export default function People({ focus, onFocusDone }) {
 
   const load = () => {
     api.people().then(setPeople).catch((e) => setErr(e.message));
+    api.consent().then((d) => {
+      const m = {};
+      d.items.forEach((c) => { m[c.name.toLowerCase()] = c; });
+      setConsent(m);
+    }).catch(() => {});
     api.dashboard().then((d) => {
       const m = {};
       d.by_person.forEach((p) => { m[p.name] = { alerts: p.total, last: p.last, first: p.first, visits: 0, active: false }; });
@@ -41,7 +49,7 @@ export default function People({ focus, onFocusDone }) {
   useEffect(() => { load(); }, []);
 
   const run = async (fn, okMsg) => {
-    setBusy(true); setErr(""); setNotes([]);
+    setBusy(true); setErr(""); setNotes([]); setDelMsg("");
     try {
       const res = await fn();
       if (res?.notes) setNotes(res.notes);
@@ -70,14 +78,43 @@ export default function People({ focus, onFocusDone }) {
   const submit = (e) => {
     e.preventDefault();
     run(async () => {
+      const existed = people.some((p) => p.name.toLowerCase() === name.trim().toLowerCase());
       const res = await api.addPerson(name, files);
-      setName(""); setFiles([]);
+      if (agreed) await api.setConsent(res.name, true);
+      else if (!existed) await api.setConsent(res.name, null);
+      setName(""); setFiles([]); setAgreed(false);
       return res;
     }, "Person added");
   };
 
   const remove = (n) => {
     if (window.confirm(`Remove ${n} and all their photos?`)) run(() => api.removePerson(n), "Person removed");
+  };
+
+  const rename = (n) => {
+    const v = window.prompt(`New name for ${n}:`, n);
+    if (v === null || !v.trim() || v.trim() === n) return;
+    run(async () => {
+      const r = await api.renamePerson(n, v.trim());
+      if (open === n) setOpen(null);
+      return r;
+    }, "Person renamed");
+  };
+
+  const toggleConsent = (n, c) =>
+    run(() => api.setConsent(n, !(c && c.consent)), c && c.consent ? "Marked as no consent" : "Consent recorded");
+
+  const wipeData = (n) => {
+    const typed = window.prompt(
+      `This permanently deletes ALL data of ${n}: photos, alerts, pictures, visit history, notices, attendance setup and consent record. It cannot be undone.\n\nType the name "${n}" to confirm.`);
+    if (typed === null) return;
+    if (typed.trim().toLowerCase() !== n.toLowerCase()) { toast("Name did not match. Nothing was deleted.", "warn"); return; }
+    run(async () => {
+      const r = await api.deletePersonData(n);
+      if (open === n) setOpen(null);
+      setDelMsg(`Deleted all data of ${r.name}: ${r.photos} photos, ${r.alerts} alerts, ${r.pictures} pictures, ${r.unknown} not-recognised events, ${r.notifications} notifications.`);
+      return r;
+    }, "All data deleted");
   };
 
   const openHist = (n) => {
@@ -122,11 +159,13 @@ export default function People({ focus, onFocusDone }) {
           {files.length ? `${files.length} ${files.length === 1 ? "photo" : "photos"} selected` : "No photos selected yet"}
           {files.length > 0 && <> <button type="button" className="btn" onClick={() => setFiles([])}>Clear</button></>}
         </span>
+        <label className="check agree"><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />This person agreed to be recognised</label>
         <button className="btn primary" disabled={busy || !name || !files.length}>
           {busy ? "Checking photos..." : "Add person"}
         </button>
       </form>
       {err && <p className="note error" role="alert">{err}</p>}
+      {delMsg && <p className="note" role="status">{delMsg}</p>}
       {notes.length > 0 && (
         <div className="note" role="status">
           <strong>Photo check</strong>
@@ -184,6 +223,7 @@ export default function People({ focus, onFocusDone }) {
         {shown.map((p) => {
           const s = stats[p.name];
           const ready = p.photos >= 2;
+          const c = consent[p.name.toLowerCase()];
           return (
             <li key={p.name} className="card pcard">
               <div className="phead">
@@ -200,11 +240,19 @@ export default function People({ focus, onFocusDone }) {
                 <div><span>Last seen</span><b title={s?.last ? formatTime(s.last) : ""}>{s?.last ? ago(s.last) : "-"}</b></div>
               </div>
               {s?.first && <p className="pfirst">First seen {formatTime(s.first)}</p>}
+              <p className={`pconsent ${c && !c.consent ? "no" : ""}`}>
+                {c ? (c.consent ? `Consent recorded ${c.date}` : `No consent (marked ${c.date})`) : "Consent not recorded"}
+              </p>
               <div className="pact">
                 <button className="btn" onClick={() => showHistory(p.name)}>History</button>
                 <button className="btn" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
                 <button className="btn" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
                 <button className="btn" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
+              </div>
+              <div className="pact">
+                <button className="btn" disabled={busy} onClick={() => rename(p.name)}>Rename</button>
+                <button className="btn" disabled={busy} onClick={() => toggleConsent(p.name, c)}>{c && c.consent ? "Mark no consent" : "Record consent"}</button>
+                <button className="btn danger" disabled={busy} onClick={() => wipeData(p.name)}>Delete all data</button>
               </div>
             </li>
           );

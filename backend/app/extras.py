@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Body, HTTPException, Response
 
-from . import notify, quiet, report
+from . import attendance, notify, quiet, report
 from . import storage as st
 
 try:
@@ -129,6 +129,55 @@ def make_router(cfg, engine):
         rank = {"ok": 0, "info": 0, "warn": 1, "error": 2}
         out["overall"] = max((c["level"] for c in out["checks"]), key=lambda l: rank[l], default="ok")
         return out
+
+    # ---- v15 (2G): workplace attendance
+    def _span(date_from, date_to):
+        end = _day(date_to)
+        start = _day(date_from) if date_from else end - timedelta(days=6)
+        return start, end
+
+    @r.get("/api/attendance")
+    def attendance_report(date_from: str = "", date_to: str = "", department: str = ""):
+        start, end = _span(date_from, date_to)
+        try:
+            return attendance.build(cfg, start, end, department)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @r.get("/api/attendance/export")
+    def attendance_csv(date_from: str = "", date_to: str = "", department: str = ""):
+        start, end = _span(date_from, date_to)
+        try:
+            rep = attendance.build(cfg, start, end, department)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return Response(attendance.csv_text(rep), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="facewatch_attendance_{rep["from"]}_{rep["to"]}.csv"'})
+
+    @r.get("/api/attendance/config")
+    def attendance_config():
+        c = attendance.load()
+        return {"config": {k: c[k] for k in ("grace", "workdays", "shifts", "departments")},
+                "people": attendance.people_setup()}
+
+    @r.put("/api/attendance/config")
+    def attendance_config_save(payload: dict = Body(...)):
+        try:
+            attendance.set_config(payload)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return attendance_config()
+
+    @r.put("/api/attendance/person")
+    def attendance_person(payload: dict = Body(...)):
+        name = st.find_person(st.safe_name(str(payload.get("name", ""))))
+        if not name:
+            raise HTTPException(404, "Person not found.")
+        try:
+            attendance.set_person(name, str(payload.get("department", "")), str(payload.get("shift", "")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True}
 
     # ---- v14 (2F): ignore for X hours
     @r.get("/api/quiet")

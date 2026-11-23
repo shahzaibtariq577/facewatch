@@ -17,6 +17,9 @@ from . import storage as st
 from .engine import Engine, StartError, check_photo
 from . import report
 from .extras import make_router
+from . import privacy
+from . import audit
+from . import users
 
 st.init_dirs()
 cfg = st.load_settings()
@@ -405,6 +408,9 @@ def dashboard(days: int = 0, date_from: str = "", date_to: str = ""):
 
 
 app.include_router(make_router(cfg, engine))
+app.include_router(privacy.make_router(cfg, engine))
+app.include_router(audit.make_router())
+app.include_router(users.make_router())
 
 
 # --------------------------------------------- serve the built React app
