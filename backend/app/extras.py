@@ -5,9 +5,9 @@ import shutil
 import time
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Body, HTTPException, Response
 
-from . import notify, report
+from . import notify, quiet, report
 from . import storage as st
 
 try:
@@ -91,6 +91,10 @@ def make_router(cfg, engine):
             add("info", "Phone alerts", "Not set up. Add an ntfy topic in Settings.")
         if h["daily_summary"]["on"] and not (p["ntfy"] or p["telegram"]):
             add("warn", "Daily summary", "It is turned on, but no phone channel is set up, so nothing can be sent.")
+        q = quiet.snapshot()
+        if q["all"] or q["people"]:
+            who = (["everyone"] if q["all"] else []) + [p["name"] for p in q["people"]]
+            add("info", "Ignore", "Alerts are being ignored for: " + ", ".join(who) + ".")
         if not h["psutil"]:
             add("info", "Monitoring", "Install psutil to see processor and memory (pip install psutil).")
         return c
@@ -125,6 +129,39 @@ def make_router(cfg, engine):
         rank = {"ok": 0, "info": 0, "warn": 1, "error": 2}
         out["overall"] = max((c["level"] for c in out["checks"]), key=lambda l: rank[l], default="ok")
         return out
+
+    # ---- v14 (2F): ignore for X hours
+    @r.get("/api/quiet")
+    def quiet_state():
+        return quiet.snapshot()
+
+    @r.post("/api/quiet")
+    def quiet_set(payload: dict = Body(...)):
+        scope = payload.get("scope")
+        name = ""
+        if scope == "person":
+            name = st.find_person(st.safe_name(str(payload.get("name", "")))) or ""
+            if not name:
+                raise HTTPException(404, "Person not found.")
+        elif scope != "all":
+            raise HTTPException(400, "Choose everyone or one person.")
+        try:
+            until = quiet.set_mute(scope, payload.get("hours"), name)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        st.add_notification("system", "quiet", ("Phone alerts are ignored for everyone" if scope == "all"
+                            else f"{name} is ignored") + f" until {until[11:16]}.", name)
+        return quiet.snapshot()
+
+    @r.delete("/api/quiet")
+    def quiet_clear(scope: str = "all", name: str = ""):
+        if scope not in ("all", "person"):
+            raise HTTPException(400, "Choose everyone or one person.")
+        real = (st.find_person(st.safe_name(name)) or name) if scope == "person" else ""
+        quiet.clear_mute(scope, real)
+        st.add_notification("system", "quiet", "Ignore turned off for everyone." if scope == "all"
+                            else f"{real} is no longer ignored.", real)
+        return quiet.snapshot()
 
     @r.get("/api/people/{name}/history")
     def history(name: str):

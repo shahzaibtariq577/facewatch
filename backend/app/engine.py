@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 
 from . import notify
+from . import quiet
 from . import storage as st
 
 FRAME_WIDTH = 640     # frames are shrunk to this width for speed
@@ -283,8 +284,16 @@ class Engine:
             self.cam_down = False
             self._note("camera", "back", f"Camera reconnected ({self.source_label}).")
 
+    def _send(self, name, text, photo=None, tags=None):
+        """Phone message, unless 'Ignore' is on for everyone or for this person."""
+        if quiet.phone_muted(name):
+            return
+        notify.send_async(self.cfg, text, photo, tags)
+
     def _new_visit(self, name, score, crop):
         """A person appeared after being away longer than the visit gap."""
+        if quiet.person_muted(name):
+            return                       # ignored person: the visit is still logged by the alert
         self._event("visit", name, f"{name} arrived (score {score:.2f}).")
         if not self.cfg.get("notify_on_match"):
             return
@@ -293,14 +302,16 @@ class Engine:
             ok, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 88])
             photo = buf.tobytes() if ok else None
         stamp = datetime.now().strftime("%H:%M:%S")
-        notify.send_async(self.cfg, f"FaceWatch: {name} seen at {stamp} "
-                                    f"({self.source_label}). Score {score:.2f}.", photo)
+        self._send(name, f"FaceWatch: {name} seen at {stamp} "
+                         f"({self.source_label}). Score {score:.2f}.", photo)
 
     def _went_missing(self, name, minutes):
         self.missing.add(name)
+        if quiet.person_muted(name):
+            return
         self._event("missing", name, f"{name} has not been seen for {minutes} minutes.")
         if self.cfg.get("notify_on_missing"):
-            notify.send_async(self.cfg, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
+            self._send(name, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
 
     # ---------------------------------------------------------- unknown
     def _unknown(self, score, frame, face):
@@ -317,9 +328,9 @@ class Engine:
                     ok, buf = cv2.imencode(".jpg", face, [cv2.IMWRITE_JPEG_QUALITY, 88])
                     photo = buf.tobytes() if ok else None
                 stamp = datetime.now().strftime("%H:%M:%S")
-                notify.send_async(self.cfg, f"FaceWatch: a face was not recognised at {stamp} "
-                                            f"({self.source_label}). It does not match anyone saved.",
-                                  photo, tags=["grey_question"])
+                self._send("", f"FaceWatch: a face was not recognised at {stamp} "
+                               f"({self.source_label}). It does not match anyone saved.",
+                           photo, tags=["grey_question"])
         except Exception as e:
             self.note = f"Could not save a Not recognised event: {e}"
 
@@ -522,7 +533,8 @@ class Engine:
                     self.last_seen[pname] = now_t
                     if pname in self.missing:
                         self.missing.discard(pname)
-                        self._event("back", pname, f"{pname} is back in view.")
+                        if not quiet.person_muted(pname):
+                            self._event("back", pname, f"{pname} is back in view.")
                     if prev_seen is None or now_t - prev_seen > visit_gap:
                         self._new_visit(pname, score, crops.get(pname))
 

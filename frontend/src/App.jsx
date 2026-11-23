@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Bell, FileText, Activity, Settings as Cog, Moon, Sun } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, FileText, Activity, BellOff, Settings as Cog, Moon, Sun } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
@@ -9,6 +9,7 @@ import Unknown from "./pages/Unknown.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import Reports from "./pages/Reports.jsx";
 import Health from "./pages/Health.jsx";
+import Quiet from "./pages/Quiet.jsx";
 import Settings from "./pages/Settings.jsx";
 
 const PAGES = [
@@ -18,6 +19,7 @@ const PAGES = [
   ["unknown", "Not recognised", UserX],
   ["notifications", "Notifications", Bell],
   ["reports", "Reports", FileText],
+  ["quiet", "Ignore", BellOff],
   ["health", "System health", Activity],
   ["settings", "Settings", Cog],
 ];
@@ -33,6 +35,7 @@ export default function App() {
   const [focus, setFocus] = useState(null);
   const [unknownNew, setUnknownNew] = useState(0);
   const [notifUnread, setNotifUnread] = useState(0);
+  const [quietCount, setQuietCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
   });
@@ -90,6 +93,14 @@ export default function App() {
   useEffect(() => {
     if (status) refreshNotif();
   }, [status?.notif_seq]);
+  const refreshQuiet = useCallback(() => {
+    api.quiet().then((q) => setQuietCount((q.all ? 1 : 0) + q.people.length)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshQuiet();
+    const id = setInterval(refreshQuiet, 30000);
+    return () => clearInterval(id);
+  }, [refreshQuiet]);
   const unkRef = useRef(null);
   useEffect(() => {
     if (!status) return;
@@ -168,6 +179,7 @@ export default function App() {
             <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
             {key === "dashboard" && unseen > 0 && <span className="badge">{unseen}</span>}
             {key === "unknown" && unknownNew > 0 && <span className="badge">{unknownNew}</span>}
+            {key === "quiet" && quietCount > 0 && <span className="badge on">{quietCount} on</span>}
             {key === "notifications" && notifUnread > 0 && <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
           </button>
         ))}
@@ -179,7 +191,7 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v13.0</span>
+        <span className="ver">v14.0</span>
       </nav>
       <main className="main">
         {page === "live" && (
@@ -191,6 +203,7 @@ export default function App() {
         {page === "unknown" && <Unknown onChanged={refreshUnknown} />}
         {page === "notifications" && <Notifications onChanged={refreshNotif} onOpenPage={open} onOpenPerson={openPerson} />}
         {page === "reports" && <Reports onOpenPerson={openPerson} />}
+        {page === "quiet" && <Quiet onChanged={refreshQuiet} />}
         {page === "health" && <Health />}
         {page === "settings" && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />

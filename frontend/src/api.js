@@ -47,6 +47,9 @@ export const api = {
   analytics: (days = 0, from = "", to = "") =>
     req(`/api/analytics?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}`),
   health: () => req("/api/health"),
+  quiet: () => req("/api/quiet"),
+  setQuiet: (scope, hours, name = "") => req("/api/quiet", send("POST", { scope, hours, name })),
+  clearQuiet: (scope, name = "") => req(`/api/quiet?scope=${scope}&name=${enc(name)}`, { method: "DELETE" }),
   history: (name) => req(`/api/people/${enc(name)}/history`),
   storage: () => req("/api/storage"),
   deletePictures: () => req("/api/snapshots", { method: "DELETE" }),

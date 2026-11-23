@@ -405,3 +405,13 @@ p.gate { text-align: center; }
 [data-theme="dark"] .hl-tag.warn { background: #3a2f12; color: #f0c870; }
 [data-theme="dark"] .hl-tag.error { background: #3d1c17; color: #ff9a8a; }
 @media (max-width: 900px) { .hl-grid { grid-template-columns: 1fr 1fr; } .hl-two { grid-template-columns: 1fr; } }
+/* Ignore for X hours (2F) */
+.qt-block { margin-bottom: 14px; }
+.qt-block h3 { display: flex; align-items: center; gap: 6px; }
+.qt-block p { margin: 0 0 12px; }
+.qt-on { color: var(--amber); font-weight: 600; }
+.qt-list { list-style: none; margin: 0; padding: 0; }
+.qt-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.qt-list li:last-child { border-bottom: 0; }
+.badge.on { background: var(--amber); }
+[data-theme="dark"] .qt-on { color: #f0c870; }
