@@ -36,7 +36,7 @@ function Stat({ icon: Icon, label, value }) {
   );
 }
 
-export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange, readOnly }) {
+export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange, readOnly, onCameraUsed }) {
   const [feed, setFeed] = useState([]);
   const seq = status?.alert_seq;
   useEffect(() => {
@@ -46,7 +46,15 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
   const d = describe(status, offline);
   const running = !!status?.running;
   const paused = running && !!status?.paused;
-  const mode = settings?.source_mode;
+  const [cams, setCams] = useState([]);
+  const loadCams = () => api.cams().then((d) => setCams(d.items)).catch(() => {});
+  useEffect(() => { loadCams(); }, [running]);
+  const activeCam = cams.find((c) => c.active);
+  const camLabel = activeCam ? `${activeCam.name}${activeCam.location ? ` · ${activeCam.location}` : ""}` : status?.source || "Camera";
+  const chooseCamera = (id) => {
+    if (!id) return;
+    api.useCam(id).then(() => { loadCams(); if (onCameraUsed) onCameraUsed(); }).catch(() => loadCams());
+  };
   const inView = running && status.matched?.length ? status.matched[0] : null;
   const lastHit = inView ? feed.find((a) => a.name === inView) : null;
 
@@ -55,13 +63,14 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
       <header className="head">
         <h2>Live</h2>
         <div className="row">
-          {settings && (mode === "webcam" ? (
-            <select aria-label="Camera" value={settings.cam_index} disabled={running || readOnly}
+          {cams.length > 0 && (
+            <select aria-label="Camera" value={activeCam ? activeCam.id : ""} disabled={running || readOnly}
                     title={running ? "Stop watching to change the camera" : "Choose the camera"}
-                    onChange={(e) => onChange({ cam_index: +e.target.value })}>
-              {[...new Set([0, 1, 2, 3, settings.cam_index])].sort().map((i) => <option key={i} value={i}>Camera {i}</option>)}
+                    onChange={(e) => chooseCamera(e.target.value)}>
+              {!activeCam && <option value="">Other source</option>}
+              {cams.map((c) => <option key={c.id} value={c.id}>{c.name}{c.location ? ` (${c.location})` : ""}</option>)}
             </select>
-          ) : <span className="pill">{mode === "video" ? "Video file" : "Network camera"}</span>)}
+          )}
           {running && !readOnly && (
             <button className="btn lv-btn" onClick={onPause}>
               {paused ? <Play size={16} /> : <Pause size={16} />}
@@ -89,7 +98,7 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
                 {d.label}
               </span>
               <span className="lv-right">
-                <span className="lv-live lv-src"><Camera size={14} aria-hidden="true" /> {status?.source || "Camera"}</span>
+                <span className="lv-live lv-src"><Camera size={14} aria-hidden="true" /> {camLabel}</span>
                 {running && !paused && <span className="lv-live"><i className="lv-rec" aria-hidden="true" /> REC</span>}
               </span>
             </div>
@@ -109,7 +118,7 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
 
           <div className="lv-stats">
             <Stat icon={Gauge} label="Best similarity" value={running ? status.best.toFixed(2) : "-"} />
-            <Stat icon={Camera} label="Camera" value={status?.source || "-"} />
+            <Stat icon={Camera} label="Camera" value={activeCam ? activeCam.name : status?.source || "-"} />
             <Stat icon={Monitor} label="Resolution" value={running && status.resolution ? status.resolution : "-"} />
             <Stat icon={Activity} label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "-"} />
           </div>

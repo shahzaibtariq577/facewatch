@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Bell, FileText, CalendarCheck, Activity, BellOff, Settings as Cog, Moon, Sun, ClipboardList, UserCog, KeyRound } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, FileText, CalendarCheck, Activity, BellOff, Settings as Cog, Moon, Sun, ClipboardList, UserCog, KeyRound, Camera } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
@@ -14,11 +14,13 @@ import Attendance from "./pages/Attendance.jsx";
 import Audit from "./pages/Audit.jsx";
 import Settings from "./pages/Settings.jsx";
 import UsersPage from "./pages/Users.jsx";
+import Cameras from "./pages/Cameras.jsx";
 import Account from "./pages/Account.jsx";
 import { useAuth } from "./Gate.jsx";
 
 const PAGES = [
   ["live", "Live", Video],
+  ["cameras", "Cameras", Camera],
   ["dashboard", "Dashboard", LayoutDashboard],
   ["people", "People", Users],
   ["unknown", "Not recognised", UserX],
@@ -32,7 +34,7 @@ const PAGES = [
   ["users", "Users", UserCog],
   ["account", "My account", KeyRound],
 ];
-const ADMIN_ONLY = ["quiet", "audit", "settings", "users"];
+const ADMIN_ONLY = ["quiet", "audit", "settings", "users", "cameras"];
 
 export default function App() {
   const { user, role } = useAuth();
@@ -212,13 +214,14 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v18.0</span>
+        <span className="ver">v20.0</span>
       </nav>
       <main className="main">
         {!admin && <p className="note" role="status">View-only account: you can look at everything here, but not change it.</p>}
         {page === "live" && (
           <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle}
-                onPause={togglePause} settings={settings} onChange={updateSettings} readOnly={!admin} />
+                onPause={togglePause} settings={settings} onChange={updateSettings} readOnly={!admin}
+                onCameraUsed={() => api.settings().then(setSettings).catch(() => {})} />
         )}
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
@@ -228,6 +231,7 @@ export default function App() {
         {page === "attendance" && <Attendance />}
         {page === "quiet" && <Quiet onChanged={refreshQuiet} />}
         {page === "health" && <Health />}
+        {page === "cameras" && admin && <Cameras />}
         {page === "audit" && admin && <Audit />}
         {page === "users" && admin && <UsersPage />}
         {page === "account" && <Account />}

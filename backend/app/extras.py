@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Body, HTTPException, Response
 
-from . import attendance, notify, quiet, report
+from . import attendance, cams, notify, quiet, report
 from . import storage as st
 
 try:
@@ -137,18 +137,18 @@ def make_router(cfg, engine):
         return start, end
 
     @r.get("/api/attendance")
-    def attendance_report(date_from: str = "", date_to: str = "", department: str = ""):
+    def attendance_report(date_from: str = "", date_to: str = "", department: str = "", camera: str = ""):
         start, end = _span(date_from, date_to)
         try:
-            return attendance.build(cfg, start, end, department)
+            return attendance.build(cfg, start, end, department, camera)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
     @r.get("/api/attendance/export")
-    def attendance_csv(date_from: str = "", date_to: str = "", department: str = ""):
+    def attendance_csv(date_from: str = "", date_to: str = "", department: str = "", camera: str = ""):
         start, end = _span(date_from, date_to)
         try:
-            rep = attendance.build(cfg, start, end, department)
+            rep = attendance.build(cfg, start, end, department, camera)
         except ValueError as e:
             raise HTTPException(400, str(e))
         return Response(attendance.csv_text(rep), media_type="text/csv; charset=utf-8",
@@ -239,12 +239,12 @@ def make_router(cfg, engine):
             raise HTTPException(400, "Use the date format YYYY-MM-DD.")
 
     @r.get("/api/report")
-    def day_report(date: str = ""):
-        return report.build(cfg, _day(date))
+    def day_report(date: str = "", camera: str = ""):
+        return report.build(cfg, _day(date), camera)
 
     @r.get("/api/report/export")
-    def day_report_csv(date: str = ""):
-        rep = report.build(cfg, _day(date))
+    def day_report_csv(date: str = "", camera: str = ""):
+        rep = report.build(cfg, _day(date), camera)
         return Response(report.csv_text(rep), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="facewatch_report_{rep["date"]}.csv"'})
 
@@ -258,10 +258,10 @@ def make_router(cfg, engine):
 
     # ---- v12 (2C): analytics
     @r.get("/api/analytics")
-    def analytics(days: int = 0, date_from: str = "", date_to: str = ""):
+    def analytics(days: int = 0, date_from: str = "", date_to: str = "", camera: str = ""):
         days = days if days in (1, 7, 30) else 0
         start, stop, _prev, span = st.resolve_range(days, date_from, date_to)
-        rows = st.read_log()
+        rows = cams.pick(cfg, st.read_log(), camera)
         gap = max(cfg.get("visit_gap", 120), 2 * cfg.get("alert_interval", 10))
         visits = st.build_visits(rows, gap)        # oldest first
         today = datetime.now().date()

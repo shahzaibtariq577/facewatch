@@ -29,20 +29,20 @@ const day = (iso) => new Date(`${iso}T00:00:00`).toLocaleDateString([], { day: "
 const hourRange = (h) => `${String(h).padStart(2, "0")}:00 to ${String((h + 1) % 24).padStart(2, "0")}:00`;
 const dur = (s) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`);
 
-export default function Analytics({ days, from, to, disabled, alertSeq }) {
+export default function Analytics({ days, from, to, disabled, alertSeq, camera = "" }) {
   const [a, setA] = useState(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     if (disabled) return undefined;
     let alive = true;
-    const load = () => api.analytics(days, from, to)
+    const load = () => api.analytics(days, from, to, camera)
       .then((d) => { if (alive) { setA(d); setErr(""); } })
       .catch((e) => { if (alive) setErr(e.message); });
     load();
     const id = setInterval(load, 10000);
     return () => { alive = false; clearInterval(id); };
-  }, [days, from, to, disabled, alertSeq]);
+  }, [days, from, to, disabled, alertSeq, camera]);
 
   if (!a) return <div className="card gallery-card"><h3>Analytics</h3><p className="muted">{err || "Loading..."}</p></div>;
 

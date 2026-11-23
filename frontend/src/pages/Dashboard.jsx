@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, ago, formatTime, snapshotUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
 import Analytics from "./Analytics.jsx";
+import CameraFilter from "../CameraFilter.jsx";
 
 function Hourly({ data }) {
   const max = Math.max(1, ...data);
@@ -84,6 +85,7 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
   const custom = days === -1;
   const badRange = custom && (!from || !to || from > to);
   const [selected, setSelected] = useState(null);
+  const [camera, setCamera] = useState("");
   const [err, setErr] = useState("");
   const toast = useToast();
   const [health, setHealth] = useState(null);
@@ -96,13 +98,13 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
 
   const load = () => {
     if (badRange) return Promise.resolve();
-    return api.dashboard(custom ? 0 : days, custom ? from : "", custom ? to : "").then(setD).catch((e) => setErr(e.message));
+    return api.dashboard(custom ? 0 : days, custom ? from : "", custom ? to : "", camera).then(setD).catch((e) => setErr(e.message));
   };
   useEffect(() => {
     load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, [days, alertSeq, from, to]);
+  }, [days, alertSeq, from, to, camera]);
 
   const clear = async () => {
     if (!window.confirm("Delete the alert history? Snapshot pictures are kept.")) return;
@@ -131,6 +133,7 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
               <button key={v} className={days === v ? "on" : ""} aria-pressed={days === v} onClick={() => pickRange(v)}>{l}</button>
             ))}
           </div>
+          <CameraFilter value={camera} onChange={setCamera} />
           {custom && (
             <>
               <input type="date" aria-label="From date" value={from} max={iso(new Date())} onChange={(e) => pickDate("from", e.target.value)} />
@@ -155,7 +158,24 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
         </div>
       </div>
 
-      <Analytics days={custom ? 0 : days} from={custom ? from : ""} to={custom ? to : ""} disabled={badRange} alertSeq={alertSeq} />
+      <Analytics days={custom ? 0 : days} from={custom ? from : ""} to={custom ? to : ""} disabled={badRange} alertSeq={alertSeq} camera={camera} />
+
+      {d.by_camera && d.by_camera.length > 0 && (
+        <div className="card gallery-card">
+          <h3>Visits by camera · {rangeLabel}</h3>
+          <div className="scroll">
+            <table>
+              <thead><tr><th>Camera</th><th>Visits</th><th>People</th><th>Alerts</th></tr></thead>
+              <tbody>
+                {d.by_camera.map((c) => (
+                  <tr key={c.name}><td>{c.name}{c.location && <span className="muted"> ({c.location})</span>}</td><td>{c.visits}</td><td>{c.people}</td><td>{c.alerts}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="muted visits-note">Counts all cameras, even when a camera is chosen above. A person seen by two cameras counts once for each.</p>
+        </div>
+      )}
 
       <div className="grid2">
         <div className="card">

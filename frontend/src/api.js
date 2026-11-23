@@ -53,14 +53,20 @@ export const api = {
   deleteUser: (username) => req(`/api/users/${enc(username)}`, { method: "DELETE" }),
   changePassword: (current_password, new_password) => req("/api/auth/password", send("POST", { current_password, new_password })),
   logout: () => req("/api/auth/logout", { method: "POST" }),
+  cams: () => req("/api/cams"),
+  camSources: () => req("/api/cams/sources"),
+  addCam: (body) => req("/api/cams", send("POST", body)),
+  updateCam: (id, body) => req(`/api/cams/${enc(id)}`, send("PUT", body)),
+  deleteCam: (id) => req(`/api/cams/${enc(id)}`, { method: "DELETE" }),
+  useCam: (id) => req(`/api/cams/${enc(id)}/use`, { method: "POST" }),
   alerts: (limit = 15) => req(`/api/alerts?limit=${limit}`),
-  dashboard: (days = 0, from = "", to = "") =>
-    req(`/api/dashboard?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}`),
-  analytics: (days = 0, from = "", to = "") =>
-    req(`/api/analytics?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}`),
+  dashboard: (days = 0, from = "", to = "", camera = "") =>
+    req(`/api/dashboard?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}${camera ? `&camera=${enc(camera)}` : ""}`),
+  analytics: (days = 0, from = "", to = "", camera = "") =>
+    req(`/api/analytics?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}${camera ? `&camera=${enc(camera)}` : ""}`),
   health: () => req("/api/health"),
-  attendance: (from, to, dept = "") =>
-    req(`/api/attendance?date_from=${from}&date_to=${to}&department=${enc(dept)}`),
+  attendance: (from, to, dept = "", camera = "") =>
+    req(`/api/attendance?date_from=${from}&date_to=${to}&department=${enc(dept)}&camera=${enc(camera)}`),
   attendanceConfig: () => req("/api/attendance/config"),
   saveAttendanceConfig: (c) => req("/api/attendance/config", send("PUT", {
     grace: c.grace, workdays: c.workdays, shifts: c.shifts, departments: c.departments })),
@@ -76,7 +82,7 @@ export const api = {
   notifications: (category = "", limit = 200) => req(`/api/notifications?category=${enc(category)}&limit=${limit}`),
   readNotifications: (category = "") => req(`/api/notifications/read?category=${enc(category)}`, { method: "POST" }),
   clearNotifications: () => req("/api/notifications", { method: "DELETE" }),
-  report: (date = "") => req(`/api/report?date=${date}`),
+  report: (date = "", camera = "") => req(`/api/report?date=${date}&camera=${enc(camera)}`),
   sendReport: (date = "") => req(`/api/report/send?date=${date}`, { method: "POST" }),
   unknown: (limit = 100) => req(`/api/unknown?limit=${limit}`),
   dismissUnknown: (id) => req(`/api/unknown/${enc(id)}/dismiss`, { method: "POST" }),
@@ -84,11 +90,11 @@ export const api = {
   addUnknownAsPerson: (id, name) => req(`/api/unknown/${enc(id)}/add-person`, send("POST", { name })),
 };
 
-export const attendanceCsvUrl = (from, to, dept = "") =>
-  `/api/attendance/export?date_from=${from}&date_to=${to}&department=${enc(dept)}`;
+export const attendanceCsvUrl = (from, to, dept = "", camera = "") =>
+  `/api/attendance/export?date_from=${from}&date_to=${to}&department=${enc(dept)}&camera=${enc(camera)}`;
 export const auditCsvUrl = (category = "", from = "", to = "") =>
   `/api/audit/export?category=${enc(category)}&date_from=${from}&date_to=${to}`;
-export const reportCsvUrl = (date = "") => `/api/report/export?date=${date}`;
+export const reportCsvUrl = (date = "", camera = "") => `/api/report/export?date=${date}&camera=${enc(camera)}`;
 export const thumbUrl = (name, v = 0) => `/api/people/${enc(name)}/thumb?v=${v}`;
 export const unknownUrl = (id, kind = "face") => `/api/unknown/${enc(id)}/image?kind=${kind}`;
 export const snapshotUrl = (file) => `/snapshots/${enc(file)}`;

@@ -8,6 +8,7 @@ import re
 import threading
 from datetime import datetime, time as dtime, timedelta
 
+from . import cams
 from . import storage as st
 
 FILE = os.path.join(st.DATA_DIR, "attendance.json")
@@ -134,7 +135,7 @@ def people_setup():
     return out
 
 
-def build(app_cfg, d_from, d_to, department=""):
+def build(app_cfg, d_from, d_to, department="", camera=""):
     """Attendance for every saved person from d_from to d_to (dates). department: '' = all,
     'none' = people without a department, or a department name."""
     if d_to < d_from:
@@ -144,7 +145,7 @@ def build(app_cfg, d_from, d_to, department=""):
     cfg = load()
     gap = max(app_cfg.get("visit_gap", 120), 2 * app_cfg.get("alert_interval", 10))
     by = {}
-    for v in st.build_visits(st.read_log(), gap):
+    for v in st.build_visits(cams.pick(app_cfg, st.read_log(), camera), gap):
         by.setdefault((v["name"].lower(), v["start"].date()), []).append(v)
     now = datetime.now()
     today = now.date()

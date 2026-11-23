@@ -20,6 +20,7 @@ from .extras import make_router
 from . import privacy
 from . import audit
 from . import users
+from . import cams
 
 st.init_dirs()
 cfg = st.load_settings()
@@ -342,11 +343,12 @@ def delete_snapshots():
 
 
 @app.get("/api/dashboard")
-def dashboard(days: int = 0, date_from: str = "", date_to: str = ""):
+def dashboard(days: int = 0, date_from: str = "", date_to: str = "", camera: str = ""):
     """days: 1 = today, 7, 30, or 0 = all time. Or a custom range with date_from and date_to
     (YYYY-MM-DD). Also returns the previous equal period for comparison."""
     days = days if days in (1, 7, 30) else 0
-    rows = st.read_log()
+    all_rows = st.read_log()
+    rows = cams.pick(cfg, all_rows, camera)
     now = datetime.now()
     today = now.date()
     start, stop, prev_start, span = st.resolve_range(days, date_from, date_to)
@@ -396,7 +398,9 @@ def dashboard(days: int = 0, date_from: str = "", date_to: str = ""):
               for v in sorted(range_visits, key=lambda v: v["end"], reverse=True)[:200]]
 
     last = max(rows, key=lambda r: r["time"]) if rows else None
+    by_camera = cams.by_camera(cfg, all_rows, start, stop, gap)
     return {
+        "by_camera": by_camera,
         "today": len(todays), "total": len(rows), "people": engine.people_count,
         "visits_today": visits_today, "visits": visits,
         "days": days, "custom": ranged and days == 0, "span_days": span, "range_alerts": len(in_range), "range_visits": len(range_visits),
@@ -411,6 +415,7 @@ app.include_router(make_router(cfg, engine))
 app.include_router(privacy.make_router(cfg, engine))
 app.include_router(audit.make_router())
 app.include_router(users.make_router())
+app.include_router(cams.make_router(cfg, engine))
 
 
 # --------------------------------------------- serve the built React app

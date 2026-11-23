@@ -172,6 +172,11 @@ class Engine:
         if not self.models_ready:
             raise StartError("The face models are still loading.")
         self.source, self.source_label = self.resolve_source()
+        try:                       # 3F: alerts and reports name the saved camera
+            from . import cams
+            self.source_label = cams.active_name(self.cfg) or self.source_label
+        except Exception:
+            pass
         self.people_dirty = True       # every new run must rebuild the face references
         self.stop_event.clear()
         self.paused = False

@@ -123,6 +123,17 @@ def describe(method, path, query, status, body, rbody):
             return "control", "Not recognised event marked as reviewed"
         if method == "DELETE":
             return "data", "Not recognised event deleted"
+    m = re.fullmatch(r"/api/cams(?:/([^/]+))?(?:/(use))?", p)
+    if m:
+        nm = str(rbody.get("name") or body.get("name") or "?")[:40]
+        if m.group(2) == "use":
+            return "settings", f"Camera selected: {nm}"
+        if method == "POST":
+            return "settings", f"Camera added: {nm}"
+        if method == "PUT":
+            return "settings", f"Camera changed: {nm}"
+        if method == "DELETE":
+            return "settings", f"Camera removed: {nm}"
     if p == "/api/settings" and method == "PUT":
         keys = [str(k) for k in body.keys()]
         return "settings", "Settings changed: " + (", ".join(keys[:8]) + (" ..." if len(keys) > 8 else "") if keys else "none")
@@ -166,7 +177,7 @@ class AuditMiddleware:
             return await self.app(scope, receive, send)
         path = scope["path"]
         want_req = b"json" in dict(scope["headers"]).get(b"content-type", b"")
-        want_resp = path.rstrip("/") == "/api/people"
+        want_resp = path.rstrip("/") == "/api/people" or path.startswith("/api/cams")
         req_body, resp = bytearray(), {"code": 0, "body": bytearray()}
 
         async def recv():

@@ -452,3 +452,10 @@ input[type=time], input[type=date], input[type=number] { padding: 7px 10px; bord
 html[data-role="viewer"] .addform:not(.keep),
 html[data-role="viewer"] .pact + .pact { display: none; }
 html[data-role="viewer"] .pact button:not(:first-child) { display: none; }
+/* v19 (3D): cameras */
+.camlist { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.camitem { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.camitem.on { border-color: var(--teal); }
+.camicon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--line); color: var(--ink); }
+.cambody { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.camact { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatTime, reportCsvUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
+import CameraFilter from "../CameraFilter.jsx";
 
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const dur = (s) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`);
@@ -13,16 +14,17 @@ export default function Reports({ onOpenPerson }) {
   const [err, setErr] = useState("");
   const [settings, setSettings] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [camera, setCamera] = useState("");
   const toast = useToast();
 
   useEffect(() => {
     let alive = true;
-    const load = () => api.report(date).then((r) => { if (alive) { setRep(r); setErr(""); } }).catch((e) => { if (alive) setErr(e.message); });
+    const load = () => api.report(date, camera).then((r) => { if (alive) { setRep(r); setErr(""); } }).catch((e) => { if (alive) setErr(e.message); });
     setRep(null);
     load();
     const id = setInterval(load, 15000);
     return () => { alive = false; clearInterval(id); };
-  }, [date]);
+  }, [date, camera]);
 
   useEffect(() => { api.settings().then(setSettings).catch(() => {}); }, []);
 
@@ -49,6 +51,7 @@ export default function Reports({ onOpenPerson }) {
       <header className="head">
         <h2>Daily report</h2>
         <div className="row no-print">
+          <CameraFilter value={camera} onChange={setCamera} />
           <button className="btn" onClick={() => move(-1)} aria-label="Previous day">‹ Previous</button>
           <input type="date" aria-label="Report date" value={date} max={today} onChange={(e) => e.target.value && setDate(e.target.value)} />
           <button className="btn" onClick={() => move(1)} disabled={date >= today} aria-label="Next day">Next ›</button>
@@ -75,7 +78,7 @@ export default function Reports({ onOpenPerson }) {
               <h3>Who was seen</h3>
               <div className="row no-print">
                 <button className="btn" onClick={() => window.print()}>Print</button>
-                <a className="btn" href={reportCsvUrl(date)} download>Export CSV</a>
+                <a className="btn" href={reportCsvUrl(date, camera)} download>Export CSV</a>
               </div>
             </div>
             <div className="scroll">

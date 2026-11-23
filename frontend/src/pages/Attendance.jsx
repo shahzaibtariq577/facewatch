@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import { api, attendanceCsvUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
+import CameraFilter from "../CameraFilter.jsx";
 
 const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const addDays = (s, n) => { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return iso(d); };
@@ -14,6 +15,7 @@ function Report() {
   const [from, setFrom] = useState(addDays(today, -6));
   const [to, setTo] = useState(today);
   const [dept, setDept] = useState("");
+  const [camera, setCamera] = useState("");
   const [rep, setRep] = useState(null);
   const [sel, setSel] = useState("");
   const [err, setErr] = useState("");
@@ -21,11 +23,11 @@ function Report() {
   useEffect(() => {
     if (from > to) { setErr("The start date is after the end date."); return; }
     let alive = true;
-    api.attendance(from, to, dept)
+    api.attendance(from, to, dept, camera)
       .then((d) => { if (alive) { setRep(d); setErr(""); } })
       .catch((e) => { if (alive) setErr(e.message); });
     return () => { alive = false; };
-  }, [from, to, dept]);
+  }, [from, to, dept, camera]);
 
   const quick = (days) => { setTo(today); setFrom(addDays(today, -(days - 1))); };
   const person = rep?.people.find((p) => p.name === sel);
@@ -38,12 +40,13 @@ function Report() {
         <button className="btn" onClick={() => quick(30)}>30 days</button>
         <label className="row">From <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value)} /></label>
         <label className="row">To <input type="date" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} /></label>
+        <CameraFilter value={camera} onChange={setCamera} />
         <select value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department">
           <option value="">All departments</option>
           {rep?.departments.map((d) => <option key={d} value={d}>{d}</option>)}
           <option value="none">No department</option>
         </select>
-        <a className="btn" href={attendanceCsvUrl(from, to, dept)} download><Download size={14} aria-hidden="true" /> Export CSV</a>
+        <a className="btn" href={attendanceCsvUrl(from, to, dept, camera)} download><Download size={14} aria-hidden="true" /> Export CSV</a>
         <button className="btn" onClick={() => window.print()}>Print</button>
       </div>
       {err && <p className="note error" role="alert">{err}</p>}

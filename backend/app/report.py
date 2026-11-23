@@ -5,17 +5,17 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import notify
+from . import cams, notify
 from . import storage as st
 
 FMT = st.TIME_FMT
 
 
-def build(cfg, day):
+def build(cfg, day, camera=""):
     """Facts for one day (a date). Only who was seen and when. No scores or judgements."""
     ds = day.strftime("%Y-%m-%d")
     gap = max(cfg.get("visit_gap", 120), 2 * cfg.get("alert_interval", 10))
-    rows = st.read_log()
+    rows = cams.pick(cfg, st.read_log(), camera)
     visits = [v for v in st.build_visits(rows, gap) if v["start"].date() == day]
     people = {}
     for v in visits:
@@ -41,7 +41,7 @@ def build(cfg, day):
         "alerts": sum(1 for r in rows if r["time"].date() == day),
         "seconds": sum(p["seconds"] for p in table),
         "busiest_hour": busiest, "busiest_visits": hourly[busiest] if busiest is not None else 0,
-        "unknown_events": sum(1 for x in st.read_unknown() if x.get("time", "").startswith(ds)),
+        "unknown_events": sum(1 for x in cams.pick_unknown(cfg, st.read_unknown(), camera) if x.get("time", "").startswith(ds)),
         "camera_problems": cam, "not_seen": not_seen,
         "people": [{"name": p["name"], "visits": p["visits"], "alerts": p["alerts"], "seconds": p["seconds"],
                     "first": p["first"].strftime(FMT), "last": p["last"].strftime(FMT)} for p in table],
