@@ -5,6 +5,7 @@ averaged over the last few frames so a single odd frame cannot raise an alert.
 
 v6: visits, "not seen" notices, Telegram alerts, photo quality check.
 v12: "Not recognised" events (a face that stays in view and matches nobody).
+v12 (2B): notification centre (people, camera and system notices are saved to a file).
 """
 import os
 import re
@@ -110,6 +111,8 @@ class Engine:
         self.paused = False                # watching is on, but nobody is checked
         self.res = ""                      # camera picture size, e.g. 1280x720
 
+        self.notif_seq = 0                 # goes up each time a notification is saved
+        self.cam_down = False              # True while the camera is disconnected
         self.unknown_seq = 0               # goes up each time a "Not recognised" event is saved
         self.last_unknown_ts = 0.0
         self.alert_seq = 0
@@ -137,6 +140,7 @@ class Engine:
             self.state = "error"
             self.models_error = f"Model download failed: {e}. Check the internet and restart."
             self.note = self.models_error
+            self._note("system", "error", self.models_error)
 
     def reload_people(self):
         self.people = st.load_people()
@@ -175,10 +179,13 @@ class Engine:
         self.note = ""
         self.last_seen, self.missing = {}, set()
         self.started_at = time.time()
+        self.cam_down = False
         self.thread = threading.Thread(target=self._worker, daemon=True)
         self.thread.start()
+        self._note("system", "start", f"Watching started ({self.source_label}).")
 
     def stop(self):
+        was_running = self.running
         self.stop_event.set()
         t = self.thread
         if t and t.is_alive():
@@ -191,18 +198,22 @@ class Engine:
         self.matched, self.faces, self.fps = [], 0, 0.0
         with self._cond:
             self._cond.notify_all()
+        if was_running:
+            self._note("system", "stop", "Watching stopped.")
 
     def pause(self):
         """Keep the camera connected but stop checking faces and sending alerts."""
         if self.running and not self.paused:
             self.paused = True
             self.matched, self.faces, self.best = [], 0, 0.0
+            self._note("system", "pause", "Monitoring paused. No faces are checked.")
 
     def resume(self):
         if self.paused:
             self.last_seen, self.missing = {}, set()     # the "not seen" timers start again
             self.started_at = time.time()
             self.paused = False
+            self._note("system", "resume", "Monitoring resumed.")
 
     def status(self):
         if self.running and self.thread and not self.thread.is_alive():
@@ -222,6 +233,7 @@ class Engine:
             "events": list(self.events)[-8:][::-1],      # newest first
             "event_seq": self.event_seq,
             "unknown_seq": self.unknown_seq,
+            "notif_seq": self.notif_seq,
             "notify_error": notify.last_error,
         }
 
@@ -251,6 +263,25 @@ class Engine:
         self.events.append({"time": datetime.now().strftime(st.TIME_FMT),
                             "kind": kind, "name": name, "text": text})
         self.event_seq += 1
+        self._note("people", kind, text, name)
+
+    def _note(self, category, kind, text, name=""):
+        """Save a notification for the Notifications page. Never stops the camera loop."""
+        try:
+            if st.add_notification(category, kind, text, name):
+                self.notif_seq += 1
+        except Exception:
+            pass
+
+    def _cam_lost(self):
+        if not self.cam_down:
+            self.cam_down = True
+            self._note("camera", "lost", f"Camera disconnected ({self.source_label}). Trying to reconnect.")
+
+    def _cam_back(self):
+        if self.cam_down:
+            self.cam_down = False
+            self._note("camera", "back", f"Camera reconnected ({self.source_label}).")
 
     def _new_visit(self, name, score, crop):
         """A person appeared after being away longer than the visit gap."""
@@ -280,6 +311,15 @@ class Engine:
                            save_full=bool(self.cfg.get("save_full_frame", True)))
             self.unknown_seq += 1
             self._event("unknown", "", "A face was not recognised. Review it on the Not recognised page.")
+            if self.cfg.get("notify_on_unknown", True):
+                photo = None
+                if self.cfg.get("notify_send_photo") and face is not None and face.size:
+                    ok, buf = cv2.imencode(".jpg", face, [cv2.IMWRITE_JPEG_QUALITY, 88])
+                    photo = buf.tobytes() if ok else None
+                stamp = datetime.now().strftime("%H:%M:%S")
+                notify.send_async(self.cfg, f"FaceWatch: a face was not recognised at {stamp} "
+                                            f"({self.source_label}). It does not match anyone saved.",
+                                  photo, tags=["grey_question"])
         except Exception as e:
             self.note = f"Could not save a Not recognised event: {e}"
 
@@ -344,16 +384,19 @@ class Engine:
             if not cap.isOpened():
                 cap.release()
                 if live and self.cfg["auto_reconnect"]:
+                    self._cam_lost()
                     self.state, self.note = "reconnecting", "Camera not available. Retrying..."
                     self.stop_event.wait(2.0)
                     continue
                 self.state, self.note = "error", "Could not open the camera or video. Check Settings."
+                self._note("camera", "error", f"Could not open the camera or video ({self.source_label}).")
                 break
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # less delay on network cameras
             except Exception:
                 pass
             self.state, self.note = "running", base_note
+            self._cam_back()
             try:
                 self.res = f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
             except Exception:
@@ -510,10 +553,12 @@ class Engine:
             if self.stop_event.is_set():
                 break
             if live and self.cfg["auto_reconnect"]:
+                self._cam_lost()
                 self.state, self.note = "reconnecting", "Connection lost. Reconnecting..."
                 self.stop_event.wait(2.0)
                 continue
             self.note = "Connection lost." if live else "Video finished."
+            self._note("camera" if live else "system", "lost" if live else "end", self.note)
             break
 
         self.matched, self.faces, self.fps = [], 0, 0.0

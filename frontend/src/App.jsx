@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Settings as Cog, Moon, Sun } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, Settings as Cog, Moon, Sun } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import People from "./pages/People.jsx";
 import Unknown from "./pages/Unknown.jsx";
+import Notifications from "./pages/Notifications.jsx";
 import Settings from "./pages/Settings.jsx";
 
 const PAGES = [
@@ -13,6 +14,7 @@ const PAGES = [
   ["dashboard", "Dashboard", LayoutDashboard],
   ["people", "People", Users],
   ["unknown", "Not recognised", UserX],
+  ["notifications", "Notifications", Bell],
   ["settings", "Settings", Cog],
 ];
 
@@ -26,6 +28,7 @@ export default function App() {
   const [unseen, setUnseen] = useState(0);
   const [focus, setFocus] = useState(null);
   const [unknownNew, setUnknownNew] = useState(0);
+  const [notifUnread, setNotifUnread] = useState(0);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
   });
@@ -77,6 +80,12 @@ export default function App() {
   const refreshUnknown = useCallback(() => {
     api.unknown(1).then((u) => setUnknownNew(u.new)).catch(() => {});
   }, []);
+  const refreshNotif = useCallback(() => {
+    api.notifications("", 1).then((n) => setNotifUnread(n.unread)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (status) refreshNotif();
+  }, [status?.notif_seq]);
   const unkRef = useRef(null);
   useEffect(() => {
     if (!status) return;
@@ -155,6 +164,7 @@ export default function App() {
             <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
             {key === "dashboard" && unseen > 0 && <span className="badge">{unseen}</span>}
             {key === "unknown" && unknownNew > 0 && <span className="badge">{unknownNew}</span>}
+            {key === "notifications" && notifUnread > 0 && <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
           </button>
         ))}
         <button className="nav theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -175,6 +185,7 @@ export default function App() {
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
         {page === "unknown" && <Unknown onChanged={refreshUnknown} />}
+        {page === "notifications" && <Notifications onChanged={refreshNotif} onOpenPage={open} onOpenPerson={openPerson} />}
         {page === "settings" && settings && (
           <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
         )}

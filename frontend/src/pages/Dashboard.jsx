@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ago, formatTime, snapshotUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
+import Analytics from "./Analytics.jsx";
 
 function Hourly({ data }) {
   const max = Math.max(1, ...data);
@@ -48,11 +49,15 @@ function PersonLink({ name, onOpen }) {
     : <>{name}</>;
 }
 
-const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"], [0, "All time"]];
+const RANGES = [[1, "Today"], [7, "7 days"], [30, "30 days"], [0, "All time"], [-1, "Custom"]];
 
-function Delta({ now, prev, days }) {
+const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const stored = (key, fallback) => {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+};
+
+function Delta({ now, prev, label }) {
   if (prev == null || prev === 0 || now == null) return null;
-  const label = days === 1 ? "yesterday" : `the previous ${days} days`;
   const diff = now - prev;
   if (diff === 0) return <small className="delta">Same as {label}</small>;
   return <small className="delta">{diff > 0 ? "▲" : "▼"} {Math.abs(diff)} {diff > 0 ? "more" : "fewer"} than {label}</small>;
@@ -63,13 +68,21 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
   const [days, setDays] = useState(() => {
     try {
       const v = parseInt(localStorage.getItem("fw-days"), 10);
-      return [0, 1, 7, 30].includes(v) ? v : 7;
+      return [-1, 0, 1, 7, 30].includes(v) ? v : 7;
     } catch { return 7; }
   });
   const pickRange = (v) => {
     setDays(v);
     try { localStorage.setItem("fw-days", String(v)); } catch { /* storage blocked */ }
   };
+  const [from, setFrom] = useState(() => stored("fw-from", iso(new Date(Date.now() - 6 * 86400000))));
+  const [to, setTo] = useState(() => stored("fw-to", iso(new Date())));
+  const pickDate = (which, v) => {
+    (which === "from" ? setFrom : setTo)(v);
+    try { localStorage.setItem(which === "from" ? "fw-from" : "fw-to", v); } catch { /* storage blocked */ }
+  };
+  const custom = days === -1;
+  const badRange = custom && (!from || !to || from > to);
   const [selected, setSelected] = useState(null);
   const [err, setErr] = useState("");
   const toast = useToast();
@@ -81,12 +94,15 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
     return () => clearInterval(id);
   }, []);
 
-  const load = () => api.dashboard(days).then(setD).catch((e) => setErr(e.message));
+  const load = () => {
+    if (badRange) return Promise.resolve();
+    return api.dashboard(custom ? 0 : days, custom ? from : "", custom ? to : "").then(setD).catch((e) => setErr(e.message));
+  };
   useEffect(() => {
     load();
     const id = setInterval(load, 5000);
     return () => clearInterval(id);
-  }, [days, alertSeq]);
+  }, [days, alertSeq, from, to]);
 
   const clear = async () => {
     if (!window.confirm("Delete the alert history? Snapshot pictures are kept.")) return;
@@ -100,6 +116,8 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
   const sel = d.history.find((r) => r.id === selected);
   const present = d.visits.filter((v) => v.active);
   const rangeLabel = RANGES.find(([v]) => v === days)[1];
+  const prevLabel = days === 1 ? "yesterday" : `the previous ${d.span_days} days`;
+  const showRange = days > 1 || custom;
   const totalAll = d.by_person.reduce((n, p) => n + p.total, 0);
   const top = [...d.by_person].sort((a, b) => b.total - a.total).slice(0, 5);
 
@@ -113,14 +131,22 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
               <button key={v} className={days === v ? "on" : ""} aria-pressed={days === v} onClick={() => pickRange(v)}>{l}</button>
             ))}
           </div>
+          {custom && (
+            <>
+              <input type="date" aria-label="From date" value={from} max={iso(new Date())} onChange={(e) => pickDate("from", e.target.value)} />
+              <input type="date" aria-label="To date" value={to} max={iso(new Date())} onChange={(e) => pickDate("to", e.target.value)} />
+            </>
+          )}
           <a className="btn" href="/api/alerts/export" download>Export CSV</a>
           <button className="btn" onClick={clear}>Clear history</button>
         </div>
       </header>
 
+      {badRange && <p className="note error" role="alert">Choose a start date that is not after the end date.</p>}
+
       <div className="stats">
-        <div className="card stat"><span>Alerts · {rangeLabel}</span><b>{d.range_alerts}</b><Delta now={d.range_alerts} prev={d.prev_alerts} days={days} /></div>
-        <div className="card stat"><span>Visits · {rangeLabel}</span><b>{d.range_visits}</b><Delta now={d.range_visits} prev={d.prev_visits} days={days} /></div>
+        <div className="card stat"><span>Alerts · {rangeLabel}</span><b>{d.range_alerts}</b><Delta now={d.range_alerts} prev={d.prev_alerts} label={prevLabel} /></div>
+        <div className="card stat"><span>Visits · {rangeLabel}</span><b>{d.range_visits}</b><Delta now={d.range_visits} prev={d.prev_visits} label={prevLabel} /></div>
         <div className="card stat"><span>Currently present</span><b>{present.length}</b></div>
         <div className="card stat"><span>People tracked</span><b>{d.people}</b></div>
         <div className="card stat">
@@ -128,6 +154,8 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
           <b className="small">{d.last ? `${formatTime(d.last.time, false)} ${d.last.name}` : "none yet"}</b>
         </div>
       </div>
+
+      <Analytics days={custom ? 0 : days} from={custom ? from : ""} to={custom ? to : ""} disabled={badRange} alertSeq={alertSeq} />
 
       <div className="grid2">
         <div className="card">
@@ -234,11 +262,11 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
         <div className="card">
           <h3>By person</h3>
           <table>
-            <thead><tr><th>Person</th><th>Today</th>{days > 1 && <th>{rangeLabel}</th>}<th>Total</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Person</th><th>Today</th>{showRange && <th>{rangeLabel}</th>}<th>Total</th><th>Last seen</th></tr></thead>
             <tbody>
               {d.by_person.length === 0 && <tr><td colSpan="5" className="muted">No people yet.</td></tr>}
               {d.by_person.map((p) => (
-                <tr key={p.name}><td className="who"><Face file={p.face} name={p.name} size={28} /><PersonLink name={p.name} onOpen={onOpenPerson} /></td><td>{p.today}</td>{days > 1 && <td>{p.range}</td>}<td>{p.total}</td><td>{formatTime(p.last)}</td></tr>
+                <tr key={p.name}><td className="who"><Face file={p.face} name={p.name} size={28} /><PersonLink name={p.name} onOpen={onOpenPerson} /></td><td>{p.today}</td>{showRange && <td>{p.range}</td>}<td>{p.total}</td><td>{formatTime(p.last)}</td></tr>
               ))}
             </tbody>
           </table>

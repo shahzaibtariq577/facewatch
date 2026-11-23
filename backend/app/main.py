@@ -337,18 +337,17 @@ def delete_snapshots():
 
 
 @app.get("/api/dashboard")
-def dashboard(days: int = 0):
-    """days: 1 = today, 7, 30, or 0 = all time. Also returns the previous equal period for comparison."""
+def dashboard(days: int = 0, date_from: str = "", date_to: str = ""):
+    """days: 1 = today, 7, 30, or 0 = all time. Or a custom range with date_from and date_to
+    (YYYY-MM-DD). Also returns the previous equal period for comparison."""
     days = days if days in (1, 7, 30) else 0
     rows = st.read_log()
     now = datetime.now()
     today = now.date()
-    start = prev_start = None
-    if days:
-        start = datetime.combine(today, dtime.min) - timedelta(days=days - 1)
-        prev_start = start - timedelta(days=days)
-    in_range = [r for r in rows if start is None or r["time"] >= start]
-    prev_alerts = (sum(1 for r in rows if prev_start <= r["time"] < start) if days else None)
+    start, stop, prev_start, span = st.resolve_range(days, date_from, date_to)
+    ranged = start is not None
+    in_range = [r for r in rows if (start is None or r["time"] >= start) and (stop is None or r["time"] < stop)]
+    prev_alerts = (sum(1 for r in rows if prev_start <= r["time"] < start) if ranged else None)
     todays = [r for r in rows if r["time"].date() == today]
     hourly = [0] * 24
     for r in todays:
@@ -381,8 +380,9 @@ def dashboard(days: int = 0):
     gap = max(cfg.get("visit_gap", 120), 2 * cfg.get("alert_interval", 10))
     all_visits = st.build_visits(rows, gap)
     visits_today = sum(1 for v in all_visits if v["start"].date() == today)
-    range_visits = [v for v in all_visits if start is None or v["start"] >= start]
-    prev_visits = (sum(1 for v in all_visits if prev_start <= v["start"] < start) if days else None)
+    range_visits = [v for v in all_visits
+                    if (start is None or v["start"] >= start) and (stop is None or v["start"] < stop)]
+    prev_visits = (sum(1 for v in all_visits if prev_start <= v["start"] < start) if ranged else None)
     visits = [{"name": v["name"], "start": v["start"].strftime(st.TIME_FMT),
                "end": v["end"].strftime(st.TIME_FMT),
                "seconds": int((v["end"] - v["start"]).total_seconds()),
@@ -394,7 +394,7 @@ def dashboard(days: int = 0):
     return {
         "today": len(todays), "total": len(rows), "people": engine.people_count,
         "visits_today": visits_today, "visits": visits,
-        "days": days, "range_alerts": len(in_range), "range_visits": len(range_visits),
+        "days": days, "custom": ranged and days == 0, "span_days": span, "range_alerts": len(in_range), "range_visits": len(range_visits),
         "prev_alerts": prev_alerts, "prev_visits": prev_visits,
         "last": {"time": last["time"].strftime(st.TIME_FMT), "name": last["name"]} if last else None,
         "hourly": hourly, "by_person": by_person,

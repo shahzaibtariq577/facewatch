@@ -334,3 +334,36 @@ p.gate { text-align: center; }
 .uadd input { flex: 1 1 140px; min-height: 40px; }
 .ev.unknown .ev-icon { color: var(--amber); }
 @media (max-width: 700px) { .ugrid { grid-template-columns: 1fr; } }
+/* Phase 2B (v12): Notifications page (append at the very end of styles.css, after the Not recognised block) */
+.nlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.nitem { display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; position: relative; }
+.nitem.unread { border-left: 4px solid var(--teal); }
+.nitem p { margin: 0 0 2px; overflow-wrap: anywhere; }
+.nitem.unread p { font-weight: 600; }
+.nicon { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--fog); color: var(--teal); }
+.nicon.c-camera { color: var(--amber); }
+.nicon.c-system { color: var(--muted); }
+.nitem.k-missing .nicon, .nitem.k-lost .nicon, .nitem.k-error .nicon { color: var(--alert); }
+.nitem.k-back .nicon { color: var(--match); }
+.nact { display: flex; gap: 8px; }
+.ndot { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--alert); }
+@media (max-width: 700px) {
+  .nitem { grid-template-columns: 36px 1fr; }
+  .nact { grid-column: 1 / -1; }
+  .nact .btn { flex: 1; }
+}
+/* Phase 2C (v12): analytics and custom dates (append at the very end of styles.css, after the Notifications block) */
+.head .row input[type="date"] { min-height: 40px; padding: 8px 10px; }
+.astats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.astats div { background: var(--fog); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; min-width: 0; }
+.astats span { color: var(--muted); font-size: 12px; }
+.astats b { font-size: 17px; overflow-wrap: anywhere; }
+.split { height: 12px; border-radius: 999px; background: var(--amber); overflow: hidden; margin: 4px 0 10px; }
+.split i { display: block; height: 100%; background: var(--teal); }
+.alegend { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 14px; }
+.alegend li { display: flex; align-items: center; gap: 6px; }
+.alegend b { margin-left: auto; }
+.alegend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.alegend i.k1 { background: var(--teal); }
+.alegend i.k2 { background: var(--amber); }
+@media (max-width: 700px) { .alegend { grid-template-columns: 1fr; } .head .row input[type="date"] { flex: 1; } }

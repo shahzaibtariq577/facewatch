@@ -19,6 +19,7 @@ PEOPLE_DIR = os.path.join(DATA_DIR, "people")
 MATCH_DIR = os.path.join(DATA_DIR, "matches")
 UNKNOWN_DIR = os.path.join(DATA_DIR, "unknown")        # v12: faces that were not recognised
 UNKNOWN_FILE = os.path.join(DATA_DIR, "unknown.json")
+NOTIF_FILE = os.path.join(DATA_DIR, "notifications.json")   # v12 (2B): notification centre
 LOG_FILE = os.path.join(DATA_DIR, "match_log.csv")
 CONFIG_FILE = os.path.join(DATA_DIR, "settings.json")
 
@@ -41,6 +42,7 @@ DEFAULTS = {
     # v12 (Phase 2A)
     "unknown_events": True,      # save a "Not recognised" event when an unknown face stays in view
     "unknown_gap": 60,           # seconds to wait before the next "Not recognised" event
+    "notify_on_unknown": True,   # send a phone alert (ntfy) for a "Not recognised" event
 }
 _TYPES = {k: type(v) for k, v in DEFAULTS.items()}
 
@@ -444,3 +446,104 @@ def cleanup_unknown(days):
     for x in old:
         _remove_unknown_files(x["id"])
     return len(old)
+
+
+# ------------------------------------------- v12 (2B): notification centre
+MAX_NOTIF = 500            # oldest notifications are dropped after this many
+KEEP_NOTIF_DAYS = 30       # and any older than this many days
+NOTIF_CATEGORIES = ("people", "camera", "system")
+
+
+def _read_notif_raw():
+    try:
+        with open(NOTIF_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_notif_raw(items):
+    init_dirs()
+    tmp = NOTIF_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(items, f)
+    os.replace(tmp, NOTIF_FILE)
+
+
+def add_notification(category, kind, text, name=""):
+    """Add one notification. Same text twice within 20 seconds is saved only once."""
+    if category not in NOTIF_CATEGORIES:
+        category = "system"
+    now = datetime.now()
+    with _lock:
+        items = _read_notif_raw()
+        if items:
+            last = items[-1]
+            try:
+                age = (now - datetime.strptime(last["time"], TIME_FMT)).total_seconds()
+            except Exception:
+                age = 999
+            if last.get("text") == text and age < 20:
+                return None
+        cutoff = (now - timedelta(days=KEEP_NOTIF_DAYS)).strftime(TIME_FMT)
+        items = [x for x in items if x.get("time", "") >= cutoff]
+        nid = max([x.get("id", 0) for x in items] + [0]) + 1
+        item = {"id": nid, "time": now.strftime(TIME_FMT), "category": category,
+                "kind": kind, "text": text, "name": name, "read": False}
+        items.append(item)
+        _write_notif_raw(items[-MAX_NOTIF:])
+    return item
+
+
+def read_notifications(category=None, limit=200):
+    """Newest first. Returns (items, unread_in_all, total_in_all)."""
+    with _lock:
+        items = _read_notif_raw()
+    unread = sum(1 for x in items if not x.get("read"))
+    shown = [x for x in items if not category or x.get("category") == category]
+    shown.sort(key=lambda x: x.get("id", 0), reverse=True)
+    return shown[:max(1, min(limit, 500))], unread, len(items)
+
+
+def mark_notifications_read(category=None):
+    with _lock:
+        items = _read_notif_raw()
+        n = 0
+        for x in items:
+            if not x.get("read") and (not category or x.get("category") == category):
+                x["read"] = True
+                n += 1
+        if n:
+            _write_notif_raw(items)
+    return n
+
+
+def clear_notifications():
+    with _lock:
+        try:
+            os.remove(NOTIF_FILE)
+        except OSError:
+            pass
+
+
+# ------------------------------------------- v12 (2C): date range for Dashboard and Analytics
+def resolve_range(days, date_from="", date_to=""):
+    """Returns (start, stop, prev_start, span_days).
+    A valid custom range (YYYY-MM-DD to YYYY-MM-DD) wins. Otherwise days = 1, 7 or 30 means
+    'the last N days including today'. start None = all time. stop None = no end.
+    prev_start is where the equal-length period before this one begins."""
+    midnight = datetime.min.time()
+    try:
+        s = datetime.strptime(date_from, "%Y-%m-%d").date()
+        e = datetime.strptime(date_to, "%Y-%m-%d").date()
+        if s <= e:
+            start = datetime.combine(s, midnight)
+            span = (e - s).days + 1
+            return start, datetime.combine(e + timedelta(days=1), midnight), start - timedelta(days=span), span
+    except (ValueError, TypeError):
+        pass
+    if days in (1, 7, 30):
+        start = datetime.combine(datetime.now().date(), midnight) - timedelta(days=days - 1)
+        return start, None, start - timedelta(days=days), days
+    return None, None, None, 0
