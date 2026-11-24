@@ -27,7 +27,10 @@ export default function Audit() {
   return (
     <section>
       <header className="head">
-        <h2>Audit log</h2>
+        <div>
+          <h2>Audit log</h2>
+          <p className="muted">Review administrative actions and application activity.</p>
+        </div>
         <div className="row">
           <div className="seg" role="group" aria-label="Type">
             {FILTERS.map(([v, l]) => (
@@ -40,6 +43,12 @@ export default function Audit() {
           <a className="btn" href={auditCsvUrl(cat, from, to)} download><Download size={14} aria-hidden="true" /> Export CSV</a>
         </div>
       </header>
+      {data && (
+        <div className="stats s2">
+          <div className="card stat"><span>Events saved</span><b>{data.total}</b></div>
+          <div className="card stat"><span>Matching this filter</span><b>{data.shown}</b></div>
+        </div>
+      )}
       <p className="muted lede">
         A saved list of who changed what: logins, people, deleted data, settings and start/stop.
         Passwords and setting values are never saved here. Only changes are logged, not just looking at a page.
@@ -61,7 +70,7 @@ export default function Audit() {
                   <td>{x.user || "-"}</td>
                   <td>{x.text}</td>
                   <td>{x.ip || "-"}</td>
-                  <td>{x.ok ? "OK" : <b className="au-fail">Failed</b>}</td>
+                  <td>{x.ok ? <span className="pill-s ok">OK</span> : <span className="pill-s err">Failed</span>}</td>
                 </tr>
               ))}
             </tbody>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Play, Square, Pause, Camera, Users, Gauge, Monitor, Activity } from "lucide-react";
+import { Play, Square, Pause, Camera, Users } from "lucide-react";
 import { api, formatTime, snapshotUrl } from "../api.js";
 
 // One function decides the state, so the chip, the border and the text can never disagree.
@@ -27,16 +27,15 @@ function describe(s, offline) {
 
 const ICON = { visit: "➜", missing: "!", back: "✓", unknown: "?" };
 
-function Stat({ icon: Icon, label, value }) {
+function Stat({ label, value }) {
   return (
     <div className="lv-stat">
-      <Icon size={16} aria-hidden="true" />
-      <div><span>{label}</span><b>{value}</b></div>
+      <span>{label}</span><b>{value}</b>
     </div>
   );
 }
 
-export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange, readOnly, onCameraUsed }) {
+export default function Live({ status, offline, error, streamKey, onToggle, onPause, settings, onChange, readOnly, onCameraUsed, onOpenPage }) {
   const [feed, setFeed] = useState([]);
   const seq = status?.alert_seq;
   useEffect(() => {
@@ -60,13 +59,17 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
     if (!id) return;
     api.useCam(id).then(() => { loadCams(); if (onCameraUsed) onCameraUsed(); }).catch(() => loadCams());
   };
+  const live = running && !paused && status?.state !== "reconnecting";
   const inView = running && status.matched?.length ? status.matched[0] : null;
   const lastHit = inView ? feed.find((a) => a.name === inView) : null;
 
   return (
     <section>
       <header className="head">
-        <h2>Live</h2>
+        <div>
+          <h2>Live monitoring</h2>
+          <p className="muted">Monitor your cameras and recognise registered people in real time.</p>
+        </div>
         <div className="row">
           {cams.length > 0 && (
             <select aria-label="Camera" value={activeCam ? activeCam.id : ""} disabled={running || readOnly || multiOn}
@@ -110,7 +113,7 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
             <div className="lv-video">
               {running
                 ? <img key={`${streamKey}-${multi ? focusLane : -1}`} src={`/api/stream?k=${streamKey}${multi && focusLane >= 0 ? `&lane=${focusLane}` : ""}`} alt="Live camera view" />
-                : <div className="lv-off"><Camera size={40} aria-hidden="true" /><p>Camera is off</p></div>}
+                : <div className="lv-off"><Camera size={36} aria-hidden="true" /><b>{offline ? "Disconnected from the backend" : "Camera is currently stopped."}</b><p>{offline ? "Start the backend on port 8000, then reload." : "Select a camera and press Start watching to begin monitoring."}</p></div>}
             </div>
             {running && (
               <div className="lv-bottom">
@@ -134,10 +137,10 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
           )}
 
           <div className="lv-stats">
-            <Stat icon={Gauge} label="Best similarity" value={running ? status.best.toFixed(2) : "-"} />
-            <Stat icon={Camera} label="Camera" value={multi ? `${lanes.length} cameras` : activeCam ? activeCam.name : status?.source || "-"} />
-            <Stat icon={Monitor} label="Resolution" value={running && status.resolution ? status.resolution : "-"} />
-            <Stat icon={Activity} label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "-"} />
+            <Stat label="Best similarity" value={running ? status.best.toFixed(2) : "--"} />
+            <Stat label="Selected camera" value={multi ? `${lanes.length} cameras` : activeCam ? activeCam.name : status?.source || "--"} />
+            <Stat label="Resolution" value={running && status.resolution ? status.resolution : "--"} />
+            <Stat label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "--"} />
           </div>
           {status?.note && running && <p className="meta">{status.note}</p>}
           {running && status?.model && <p className="meta">Face model: {status.model === "arcface" ? "ArcFace (stronger)" : "SFace (older)"}</p>}
@@ -145,9 +148,17 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
 
         <div className="side-col">
           <aside className="card lv-who">
-            <h3>Face detected</h3>
+            <div className="card-h">
+              <h3>Face detection</h3>
+              <small>{!running ? "waiting to start" : paused ? "paused" : "live"}</small>
+            </div>
+            <div className="counts" aria-label="Faces in view right now">
+              <div><b>{live ? status.faces : "--"}</b><span>Detected</span></div>
+              <div><b>{live ? status.matched.length : "--"}</b><span>Recognised</span></div>
+              <div><b>{live ? Math.max(0, status.faces - status.matched.length) : "--"}</b><span>Unknown</span></div>
+            </div>
             {inView ? (
-              <div className="who-row">
+              <div className="who-row" style={{ marginTop: 14 }}>
                 {lastHit?.face
                   ? <img className="face" src={snapshotUrl(lastHit.face)} alt="" />
                   : <span className="face blank" aria-hidden="true">{inView[0]}</span>}
@@ -157,29 +168,31 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
                   <span className="badge-known">Known person</span>
                 </div>
               </div>
-            ) : running && status.faces > 0 ? (
-              <div><strong>Face not recognised</strong><p className="muted">Not one of your saved people.</p></div>
-            ) : <p className="muted">{running ? "No face in view." : "Start watching to see who is in view."}</p>}
+            ) : live && status.faces > 0 ? (
+              <p className="muted" style={{ margin: "12px 0 0" }}><b>Face not recognised.</b> Not one of your saved people.</p>
+            ) : <p className="muted" style={{ margin: "12px 0 0" }}>{running ? "No face in view." : "Start watching to see who is in view."}</p>}
           </aside>
 
           <aside className="card feed">
-            <h3>Recent alerts</h3>
+            <div className="card-h">
+              <h3>Recent alerts</h3>
+              <small>{running ? "history" : "history, not live"}{onOpenPage && <> · <button className="linkbtn" onClick={() => onOpenPage("dashboard")}>View all</button></>}</small>
+            </div>
             {feed.length === 0
               ? <p className="muted">No alerts yet. When a saved person is seen, they appear here.</p>
               : <ul>{feed.map((a) => (
                   <li key={a.id}>
                     {a.face
-                      ? <img className="face" src={snapshotUrl(a.face)} alt="" width="40" height="40" />
+                      ? <img className="face" src={snapshotUrl(a.face)} alt="" width="38" height="38" />
                       : <span className="face blank" aria-hidden="true">{a.name[0]}</span>}
-                    <strong>{a.name}</strong>
-                    <span>{a.score}</span>
-                    <time>{formatTime(a.time, false)}</time>
+                    <div><strong>{a.name}</strong><span>{formatTime(a.time, false)} · {a.source}</span></div>
+                    <div><b>{a.score}</b><span className="pill-s ok">Recognised</span></div>
                   </li>
                 ))}</ul>}
           </aside>
 
           <aside className="card notices">
-            <h3>Notices</h3>
+            <div className="card-h"><h3>Notices</h3></div>
             {!status?.events?.length
               ? <p className="muted">Arrivals, people not seen for a while, and returns show here.</p>
               : <ul>{status.events.map((e, i) => (

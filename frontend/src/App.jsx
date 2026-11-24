@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Video, LayoutDashboard, Users, UserX, Bell, FileText, CalendarCheck, Activity, BellOff, Settings as Cog, Moon, Sun, ClipboardList, UserCog, KeyRound, Camera } from "lucide-react";
+import { Video, LayoutDashboard, Users, UserX, Bell, FileText, CalendarCheck, Activity, BellOff, Settings as Cog, Moon, Sun, ClipboardList, UserCog, KeyRound, Camera, Menu, PanelLeftClose, PanelLeftOpen, LogOut } from "lucide-react";
 import { api, beep } from "./api.js";
 import { useToast } from "./Toast.jsx";
 import Live from "./pages/Live.jsx";
@@ -34,6 +34,11 @@ const PAGES = [
   ["users", "Users", UserCog],
   ["account", "My account", KeyRound],
 ];
+const GROUPS = [
+  ["Monitoring", ["live", "cameras", "health"]],
+  ["Management", ["dashboard", "people", "unknown", "notifications"]],
+  ["Records & admin", ["reports", "attendance", "quiet", "audit", "settings", "users", "account"]],
+];
 const ADMIN_ONLY = ["quiet", "audit", "settings", "users", "cameras"];
 
 export default function App() {
@@ -50,6 +55,20 @@ export default function App() {
   const [unknownNew, setUnknownNew] = useState(0);
   const [notifUnread, setNotifUnread] = useState(0);
   const [quietCount, setQuietCount] = useState(0);
+  const [saveState, setSaveState] = useState("saved");    // saving | saved | error
+  const [drawer, setDrawer] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem("fw-collapsed") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("fw-collapsed", collapsed ? "1" : "0"); } catch { /* storage blocked */ }
+  }, [collapsed]);
+  useEffect(() => {
+    if (!drawer) return undefined;
+    const esc = (e) => { if (e.key === "Escape") setDrawer(false); };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [drawer]);
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem("fw-theme") || "light"; } catch { return "light"; }
   });
@@ -142,6 +161,7 @@ export default function App() {
 
   const open = (key) => {
     setPage(key);
+    setDrawer(false);
     if (key === "dashboard") setUnseen(0);
   };
   const openPerson = (name) => { setFocus(name); open("people"); };
@@ -179,49 +199,90 @@ export default function App() {
   const updateSettings = useCallback((patch) => {
     setSettings((s) => ({ ...s, ...patch }));
     pending.current = { ...pending.current, ...patch };
+    setSaveState("saving");
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const body = pending.current;
       pending.current = {};
-      api.saveSettings(body).then(() => toast("Settings saved")).catch((e) => { setError(e.message); toast(e.message, "error"); });
+      api.saveSettings(body)
+        .then(() => { setSaveState("saved"); toast("Settings saved"); })
+        .catch((e) => { setSaveState("error"); setError(e.message); toast(e.message, "error"); });
     }, 400);
   }, [toast]);
 
+  const meta = Object.fromEntries(PAGES.map(([k, l, I]) => [k, [l, I]]));
+  const visible = (k) => admin || !ADMIN_ONLY.includes(k);
+  const badgeFor = (key) => {
+    if (key === "dashboard" && unseen > 0) return <span className="badge">{unseen}</span>;
+    if (key === "unknown" && unknownNew > 0) return <span className="badge">{unknownNew}</span>;
+    if (key === "quiet" && quietCount > 0) return <span className="badge on">{quietCount} on</span>;
+    if (key === "notifications" && notifUnread > 0) return <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>;
+    return null;
+  };
+  const sysText = offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online";
+
   return (
-    <div className="shell">
+    <div className={`shell ${collapsed ? "collapsed" : ""} ${drawer ? "drawer" : ""}`}>
+      <header className="topbar">
+        <button className="burger" onClick={() => setDrawer(true)} aria-label="Open menu"><Menu size={20} /></button>
+        <b>FaceWatch</b>
+        {notifUnread > 0 && <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
+      </header>
+      <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       <nav className="side" aria-label="Main">
-        <h1 className="brand">FaceWatch</h1>
-        <p className="tagline">Real-time face watcher</p>
-        {PAGES.filter(([k]) => admin || !ADMIN_ONLY.includes(k)).map(([key, label, Icon]) => (
-          <button key={key} className={`nav ${page === key ? "on" : ""}`}
-                  aria-current={page === key ? "page" : undefined} onClick={() => open(key)}>
-            <span className="nav-l"><Icon size={18} aria-hidden="true" />{label}</span>
-            {key === "dashboard" && unseen > 0 && <span className="badge">{unseen}</span>}
-            {key === "unknown" && unknownNew > 0 && <span className="badge">{unknownNew}</span>}
-            {key === "quiet" && quietCount > 0 && <span className="badge on">{quietCount} on</span>}
-            {key === "notifications" && notifUnread > 0 && <span className="badge">{notifUnread > 99 ? "99+" : notifUnread}</span>}
+        <div className="side-top">
+          <div>
+            <h1 className="brand"><span className="full">FaceWatch</span><span className="mini">FW</span></h1>
+            <p className="tagline">Real-time face monitoring</p>
+          </div>
+          <button className="collapse" onClick={() => setCollapsed(!collapsed)}
+                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}>
+            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
-        ))}
-        <div className="whoami">
-          <span>Signed in as <b>{user}</b> ({admin ? "admin" : "viewer"})</span>
-          <button className="btn" onClick={logout}>Log out</button>
         </div>
-        <button className="nav theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
-          <span className="nav-l">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span className="t-l">{theme === "dark" ? "Light mode" : "Dark mode"}</span></span>
-        </button>
-        <span className={`sys ${offline ? "off" : status?.running ? "on" : ""}`}>
-          <i className="lv-dot" aria-hidden="true" />
-          {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
-        </span>
-        <span className="ver">v22.0</span>
+        {GROUPS.map(([group, keys]) => {
+          const items = keys.filter(visible);
+          if (!items.length) return null;
+          return (
+            <div key={group} style={{ display: "contents" }}>
+              <p className="grp">{group}</p>
+              {items.map((key) => {
+                const [label, Icon] = meta[key];
+                return (
+                  <button key={key} className={`nav ${page === key ? "on" : ""}`} data-tip={label}
+                          aria-current={page === key ? "page" : undefined} onClick={() => open(key)}>
+                    <span className="nav-l"><Icon size={18} aria-hidden="true" /><span className="nav-t">{label}</span></span>
+                    {badgeFor(key)}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+        <div className="side-foot">
+          <span className={`sys ${offline ? "off" : status?.running ? "on" : ""}`} title={sysText}>
+            <i className="lv-dot" aria-hidden="true" /><span className="t">{sysText}</span>
+          </span>
+          <div className="whoami"><b>{user}</b> · {admin ? "Admin" : "Viewer"}<small>Signed in</small></div>
+          <div className="foot-actions">
+            <button className="nav theme" data-tip={theme === "dark" ? "Light mode" : "Dark mode"}
+                    onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                    aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+              <span className="nav-l">{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span className="nav-t">{theme === "dark" ? "Light mode" : "Dark mode"}</span></span>
+            </button>
+            <button className="nav" data-tip="Log out" onClick={logout}>
+              <span className="nav-l"><LogOut size={17} aria-hidden="true" /><span className="nav-t">Log out</span></span>
+            </button>
+          </div>
+          <span className="ver">v22.0</span>
+        </div>
       </nav>
       <main className="main">
         {!admin && <p className="note" role="status">View-only account: you can look at everything here, but not change it.</p>}
         {page === "live" && (
           <Live status={status} offline={offline} error={error} streamKey={streamKey} onToggle={toggle}
                 onPause={togglePause} settings={settings} onChange={updateSettings} readOnly={!admin}
-                onCameraUsed={() => api.settings().then(setSettings).catch(() => {})} />
+                onOpenPage={open} onCameraUsed={() => api.settings().then(setSettings).catch(() => {})} />
         )}
         {page === "dashboard" && <Dashboard alertSeq={status?.alert_seq} onOpenPerson={openPerson} />}
         {page === "people" && <People focus={focus} onFocusDone={() => setFocus(null)} />}
@@ -231,12 +292,12 @@ export default function App() {
         {page === "attendance" && <Attendance />}
         {page === "quiet" && <Quiet onChanged={refreshQuiet} />}
         {page === "health" && <Health />}
-        {page === "cameras" && admin && <Cameras />}
+        {page === "cameras" && admin && <Cameras status={status} />}
         {page === "audit" && admin && <Audit />}
         {page === "users" && admin && <UsersPage />}
         {page === "account" && <Account />}
         {page === "settings" && admin && settings && (
-          <Settings settings={settings} onChange={updateSettings} running={!!status?.running} />
+          <Settings settings={settings} onChange={updateSettings} running={!!status?.running} saveState={saveState} />
         )}
       </main>
     </div>

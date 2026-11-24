@@ -8,16 +8,19 @@ const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOSt
 const addDays = (s, n) => { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return iso(d); };
 const STATUS = { present: "Present", late: "Late", absent: "Absent", off: "Day off", pending: "Not yet", upcoming: "Upcoming" };
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// Cards you can click: each one lists the people (and days) with that status.
+const CARDS = [["present", "On time", ["present"]], ["late", "Late", ["late"]], ["absent", "Absent", ["absent"]], ["pending", "Not yet", ["pending", "upcoming"]]];
 const dayName = (s) => DAYS[(new Date(`${s}T12:00:00`).getDay() + 6) % 7];
 
 function Report() {
   const today = iso(new Date());
-  const [from, setFrom] = useState(addDays(today, -6));
+  const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
   const [dept, setDept] = useState("");
   const [camera, setCamera] = useState("");
   const [rep, setRep] = useState(null);
   const [sel, setSel] = useState("");
+  const [show, setShow] = useState("");
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -31,6 +34,10 @@ function Report() {
 
   const quick = (days) => { setTo(today); setFrom(addDays(today, -(days - 1))); };
   const person = rep?.people.find((p) => p.name === sel);
+  const all = rep ? rep.people.flatMap((p) => p.rows.map((r) => ({ ...r, name: p.name, department: p.department, shift: p.shift }))) : [];
+  const card = CARDS.find(([k]) => k === show);
+  const list = card ? all.filter((r) => card[2].includes(r.status)).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name))) : [];
+  const period = from === to ? (from === today ? "today" : from) : `${from} to ${to}`;
 
   return (
     <div>
@@ -54,10 +61,37 @@ function Report() {
         <>
           <div className="stats">
             <div className="card stat"><span>People</span><b>{rep.totals.people}</b></div>
-            <div className="card stat"><span>Present days</span><b>{rep.totals.present}</b></div>
-            <div className="card stat"><span>Late arrivals</span><b>{rep.totals.late}</b></div>
-            <div className="card stat"><span>Absent days</span><b>{rep.totals.absent}</b></div>
+            {CARDS.map(([k, label, kinds]) => (
+              <button key={k} className={`card stat statbtn ${show === k ? "on" : ""}`} aria-pressed={show === k}
+                      onClick={() => setShow(show === k ? "" : k)} title="Click to see who">
+                <span>{label}</span><b>{all.filter((r) => kinds.includes(r.status)).length}</b>
+              </button>
+            ))}
           </div>
+          <p className="muted no-print"><small>Click On time, Late, Absent or Not yet to see who. Showing {period}.</small></p>
+          {card && (
+            <div className="card at-scroll" style={{ marginBottom: 14 }}>
+              <h3>{card[1]}: {period} ({list.length})</h3>
+              {list.length === 0 ? <p className="muted">Nobody.</p> : (
+                <table>
+                  <thead><tr><th>Date</th><th>Name</th><th>Department</th><th>Shift</th><th>First in</th><th>Last out</th><th>{show === "late" ? "Late by" : "Minutes seen"}</th></tr></thead>
+                  <tbody>
+                    {list.map((r) => (
+                      <tr key={`${r.date}-${r.name}`}>
+                        <td>{dayName(r.date)} {r.date}</td>
+                        <td><button className="at-link" onClick={() => setSel(r.name)}>{r.name}</button></td>
+                        <td>{r.department || <span className="muted">none</span>}</td>
+                        <td>{r.shift.name} <span className="muted">{r.shift.start}-{r.shift.end}</span></td>
+                        <td>{r.first_in || "-"}</td><td>{r.last_out || "-"}</td>
+                        <td>{show === "late" ? (r.late_minutes ? `${r.late_minutes} min` : "-") : (r.minutes || "-")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="muted"><small>Click a name for that person's day-by-day times (shown further down).</small></p>
+            </div>
+          )}
           <div className="card at-scroll">
             <h3>People</h3>
             {rep.people.length === 0 ? <p className="muted">No saved people in this department.</p> : (

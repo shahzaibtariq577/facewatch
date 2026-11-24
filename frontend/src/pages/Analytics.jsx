@@ -91,15 +91,20 @@ export default function Analytics({ days, from, to, disabled, alertSeq, camera =
                   <div><span>People</span><b>{a.people}</b></div>
                   <div><span>Average stay</span><b>{dur(a.avg_seconds)}</b></div>
                 </div>
-                <div className="split" role="img" aria-label={`${a.first_time_visits} first-time visits, ${a.repeat_visits} repeat visits`}>
-                  <i style={{ width: `${100 - repeatPct}%` }} />
-                </div>
+                <div className="donut-row">
+                  <svg viewBox="0 0 42 42" className="donut" role="img" aria-label={`${a.first_time_visits} first-time visits, ${a.repeat_visits} repeat visits`}>
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--amber)" strokeWidth="6" />
+                    <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--teal)" strokeWidth="6"
+                            strokeDasharray={`${100 - repeatPct} ${repeatPct}`} strokeDashoffset="25" />
+                    <text x="21" y="24.5" textAnchor="middle" fontSize="9">{a.visits}</text>
+                  </svg>
                 <ul className="alegend">
                   <li><i className="k1" /> First-time visits <b>{a.first_time_visits}</b></li>
                   <li><i className="k2" /> Repeat visits <b>{a.repeat_visits}</b></li>
                   <li>New people <b>{a.new_people}</b></li>
                   <li>Returning people <b>{a.returning_people}</b></li>
                 </ul>
+                </div>
                 <p className="muted visits-note">"First-time" means the first visit in the saved history. If you clear the history, everyone starts again as new.</p>
               </>}
         </div>

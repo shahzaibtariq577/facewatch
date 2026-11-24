@@ -67,7 +67,10 @@ export default function Notifications({ onChanged, onOpenPage, onOpenPerson }) {
   return (
     <section>
       <header className="head">
-        <h2>Notifications</h2>
+        <div>
+          <h2>Notifications</h2>
+          <p className="muted">Alerts and system events in one place.</p>
+        </div>
         <div className="row">
           <div className="seg" role="group" aria-label="Filter">
             {FILTERS.map(([v, l]) => (
@@ -75,16 +78,19 @@ export default function Notifications({ onChanged, onOpenPage, onOpenPerson }) {
             ))}
           </div>
           <button className="btn admin-only" onClick={markRead} disabled={unreadShown === 0}>Mark all read</button>
-          <button className="btn admin-only" onClick={clearAll} disabled={data.total === 0}>Clear all</button>
+          <button className="btn danger-o admin-only" onClick={clearAll} disabled={data.total === 0}>Clear all</button>
         </div>
       </header>
+      <div className="stats s2">
+        <div className="card stat"><span>Unread</span><b>{data.unread}</b></div>
+        <div className="card stat"><span>Total</span><b>{data.total}</b></div>
+      </div>
       <p className="muted lede">
         A saved list of what happened: people arriving or not seen, camera problems, and system changes.
-        {data.unread > 0 ? ` ${data.unread} unread.` : ""}
       </p>
 
       <div className="row no-print" style={{ marginBottom: 14 }}>
-        <input type="search" aria-label="Search notifications" placeholder="Search a name or word" value={q}
+        <input type="search" className="search" aria-label="Search notifications" placeholder="Search a name or word" value={q}
                onChange={(e) => setQ(e.target.value)} />
         <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of notice">
           {KINDS.map(([v, l]) => <option key={v || "any"} value={v}>{l}</option>)}

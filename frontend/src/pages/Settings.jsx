@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Copy, Eye, EyeOff } from "lucide-react";
+import { useToast } from "../Toast.jsx";
 import { api } from "../api.js";
 
 const INTERVALS = [[5, "Every 5 seconds"], [10, "Every 10 seconds"], [30, "Every 30 seconds"],
@@ -16,7 +18,18 @@ const randomTopic = () => {
   return "facewatch-" + [...a].map((b) => (b % 36).toString(36)).join("");
 };
 
-export default function Settings({ settings: s, onChange, running }) {
+const SECTIONS = [["detection", "Detection"], ["alerts", "Alerts"], ["visits", "Visits"], ["phone", "Phone notifications"],
+                  ["unknown", "Not recognised"], ["summary", "Daily summary"], ["telegram", "Telegram"], ["storage", "Storage"], ["video", "Video source"], ["account", "Account"]];
+
+export default function Settings({ settings: s, onChange, running, saveState = "saved" }) {
+  const toast = useToast();
+  const [showTopic, setShowTopic] = useState(false);
+  const [active, setActive] = useState("detection");
+  const go = (id) => { setActive(id); document.getElementById(`set-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  const copyTopic = async () => {
+    try { await navigator.clipboard.writeText(s.ntfy_topic || ""); toast("Topic copied"); }
+    catch { toast("Could not copy. Show the topic and copy it by hand.", "warn"); }
+  };
   const [cams, setCams] = useState([0, 1]);
   const [scanMsg, setScanMsg] = useState("");
   const [usage, setUsage] = useState(null);
@@ -50,9 +63,20 @@ export default function Settings({ settings: s, onChange, running }) {
 
   return (
     <section>
-      <header className="head"><h2>Settings</h2></header>
+      <header className="head">
+        <div>
+          <h2>Settings</h2>
+          <p className="muted">Tune recognition, alerts and notifications. Changes save automatically.</p>
+        </div>
+        <span className={`savechip ${saveState}`} role="status">{saveState === "saving" ? "Saving..." : saveState === "error" ? "Error: not saved" : "Saved"}</span>
+      </header>
+      <div className="settings">
+        <nav className="setnav" aria-label="Settings sections">
+          {SECTIONS.map(([id, label]) => <button key={id} className={active === id ? "on" : ""} onClick={() => go(id)}>{label}</button>)}
+        </nav>
+        <div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-detection">
         <h3>Detection</h3>
         <label className="range">Match strictness: <b>{(s.threshold_arc ?? 0.45).toFixed(2)}</b>
           <input type="range" min="0.30" max="0.75" step="0.01" value={s.threshold_arc ?? 0.45}
@@ -75,7 +99,7 @@ export default function Settings({ settings: s, onChange, running }) {
         {check("auto_reconnect", "Reconnect automatically if the camera drops")}
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-alerts">
         <h3>Alerts</h3>
         <label>Alert again while the person stays in view
           <select value={s.alert_interval} onChange={(e) => onChange({ alert_interval: +e.target.value })}>
@@ -87,7 +111,7 @@ export default function Settings({ settings: s, onChange, running }) {
         {check("pictures_once", "Take only one picture per visit (not at every alert)")}
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-visits">
         <h3>Visits and "not seen"</h3>
         <label>A person back after this long counts as a new visit
           <select value={s.visit_gap} onChange={(e) => onChange({ visit_gap: +e.target.value })}>
@@ -102,12 +126,18 @@ export default function Settings({ settings: s, onChange, running }) {
         <p className="muted">The "not seen" timer only runs while watching and the camera is connected. It restarts when you press Start or the camera reconnects. Notices are kept in memory and clear when the backend restarts.</p>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-phone">
         <h3>Phone alerts (ntfy, easiest)</h3>
         <p className="muted">1) Install the free <b>ntfy</b> app on your phone. 2) Tap + and subscribe to the same topic name you type below. No account needed. Settings save automatically; wait a second before testing.</p>
         <label>Topic name (keep it secret and long)
-          <input value={s.ntfy_topic || ""} placeholder="facewatch-yourname-4821"
-                 onChange={(e) => onChange({ ntfy_topic: cleanTopic(e.target.value) })} />
+          <span className="topicrow">
+            <input type={showTopic ? "text" : "password"} autoComplete="off" value={s.ntfy_topic || ""} placeholder="facewatch-yourname-4821"
+                   onChange={(e) => onChange({ ntfy_topic: cleanTopic(e.target.value) })} />
+            <button type="button" className="btn" onClick={() => setShowTopic(!showTopic)} aria-label={showTopic ? "Hide topic" : "Show topic"}>
+              {showTopic ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+            <button type="button" className="btn" onClick={copyTopic} disabled={!s.ntfy_topic}><Copy size={15} aria-hidden="true" /> Copy</button>
+          </span>
         </label>
         <div className="row">
           <button className="btn" onClick={() => onChange({ ntfy_topic: randomTopic() })}>Make a random topic</button>
@@ -123,7 +153,7 @@ export default function Settings({ settings: s, onChange, running }) {
         <p className="muted">The test goes to every channel that is filled in (ntfy and/or Telegram).</p>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-unknown">
         <h3>Not recognised faces</h3>
         {check("unknown_events", "Save an event when a face stays in view and matches nobody")}
         {check("notify_on_unknown", "Send a phone alert for these events")}
@@ -134,7 +164,7 @@ export default function Settings({ settings: s, onChange, running }) {
         </label>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-summary">
         <h3>Daily summary</h3>
         {check("daily_summary", "Send an end-of-day summary to the phone")}
         <label>Send after
@@ -144,7 +174,7 @@ export default function Settings({ settings: s, onChange, running }) {
         <p className="muted">Sent once a day through ntfy or Telegram, and only while the backend is running. To test it now, use "Send now" on the Reports page.</p>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-telegram">
         <h3>Telegram (optional)</h3>
         <p className="muted">Only fill this in if you also want Telegram. Create a bot with @BotFather, press Start in your bot, and get your chat ID from @userinfobot.</p>
         <label>Bot token
@@ -158,7 +188,7 @@ export default function Settings({ settings: s, onChange, running }) {
         </label>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-storage">
         <h3>Storage</h3>
         <p className="muted">Pictures use {usage ? `${usage.mb} MB (${usage.files} files)` : "..."} on this computer.</p>
         {check("save_full_frame", "Save the full picture too (turn off to save only the small face photo)")}
@@ -173,7 +203,7 @@ export default function Settings({ settings: s, onChange, running }) {
         </div>
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-video">
         <h3>Video source</h3>
         {running && <p className="note">Source changes apply the next time you press Start.</p>}
         <label className="check"><input type="radio" name="mode" checked={s.source_mode === "webcam"} onChange={() => onChange({ source_mode: "webcam" })} />Webcam</label>
@@ -199,9 +229,11 @@ export default function Settings({ settings: s, onChange, running }) {
         )}
       </div>
 
-      <div className="card setgroup">
+      <div className="card setgroup" id="set-account">
         <h3>Account</h3>
         <button className="btn" onClick={() => fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.reload())}>Log out</button>
+      </div>
+        </div>
       </div>
     </section>
   );

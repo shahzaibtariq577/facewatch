@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Plus, X } from "lucide-react";
 import { api, ago, formatTime, thumbUrl } from "../api.js";
 import { useToast } from "../Toast.jsx";
+import Modal from "../Modal.jsx";
 
 const dur = (s) => (s < 60 ? `${s} s` : s < 3600 ? `${Math.floor(s / 60)} min`
   : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`);
@@ -20,6 +22,18 @@ export default function People({ focus, onFocusDone }) {
   const [consent, setConsent] = useState({});
   const [agreed, setAgreed] = useState(false);
   const [delMsg, setDelMsg] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [menu, setMenu] = useState("");
+  const [renaming, setRenaming] = useState(null);   // { name, value }
+  const [wiping, setWiping] = useState(null);       // { name, typed }
+  const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
+  useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
+  useEffect(() => {
+    if (!menu) return undefined;
+    const close = (e) => { if (!e.target.closest?.(".menu")) setMenu(""); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menu]);
   const toast = useToast();
   const addTo = useRef(null);
   const picker = useRef(null);
@@ -82,7 +96,7 @@ export default function People({ focus, onFocusDone }) {
       const res = await api.addPerson(name, files);
       if (agreed) await api.setConsent(res.name, true);
       else if (!existed) await api.setConsent(res.name, null);
-      setName(""); setFiles([]); setAgreed(false);
+      setName(""); setFiles([]); setAgreed(false); setShowAdd(false);
       return res;
     }, "Person added");
   };
@@ -91,12 +105,14 @@ export default function People({ focus, onFocusDone }) {
     if (window.confirm(`Remove ${n} and all their photos?`)) run(() => api.removePerson(n), "Person removed");
   };
 
-  const rename = (n) => {
-    const v = window.prompt(`New name for ${n}:`, n);
-    if (v === null || !v.trim() || v.trim() === n) return;
+  const doRename = (e) => {
+    e.preventDefault();
+    const n = renaming.name, v = renaming.value.trim();
+    if (!v || v === n) { setRenaming(null); return; }
     run(async () => {
-      const r = await api.renamePerson(n, v.trim());
+      const r = await api.renamePerson(n, v);
       if (open === n) setOpen(null);
+      setRenaming(null);
       return r;
     }, "Person renamed");
   };
@@ -104,14 +120,13 @@ export default function People({ focus, onFocusDone }) {
   const toggleConsent = (n, c) =>
     run(() => api.setConsent(n, !(c && c.consent)), c && c.consent ? "Marked as no consent" : "Consent recorded");
 
-  const wipeData = (n) => {
-    const typed = window.prompt(
-      `This permanently deletes ALL data of ${n}: photos, alerts, pictures, visit history, notices, attendance setup and consent record. It cannot be undone.\n\nType the name "${n}" to confirm.`);
-    if (typed === null) return;
-    if (typed.trim().toLowerCase() !== n.toLowerCase()) { toast("Name did not match. Nothing was deleted.", "warn"); return; }
+  const doWipe = (e) => {
+    e.preventDefault();
+    const n = wiping.name;
     run(async () => {
       const r = await api.deletePersonData(n);
       if (open === n) setOpen(null);
+      setWiping(null);
       setDelMsg(`Deleted all data of ${r.name}: ${r.photos} photos, ${r.alerts} alerts, ${r.pictures} pictures, ${r.unknown} not-recognised events, ${r.notifications} notifications.`);
       return r;
     }, "All data deleted");
@@ -138,33 +153,30 @@ export default function People({ focus, onFocusDone }) {
 
   const needle = q.trim().toLowerCase();
   const shown = people.filter((p) => p.name.toLowerCase().includes(needle));
+  const readyCount = people.filter((p) => p.photos >= 2).length;
+  const consentCount = people.filter((p) => consent[p.name.toLowerCase()]?.consent).length;
 
   return (
     <section>
-      <header className="head"><h2>People</h2></header>
+      <header className="head">
+        <div>
+          <h2>People</h2>
+          <p className="muted">Manage registered people and their recognition profiles.</p>
+        </div>
+        <button className="btn primary admin-only" onClick={() => { setErr(""); setShowAdd(true); }}><Plus size={15} aria-hidden="true" /> Add person</button>
+      </header>
       <p className="muted lede">
         Add 2 or 3 clear, front-facing photos of each person you want to find. Only add people who have
         agreed to be recognised. Photos with no face are skipped, and weak photos get a warning.
       </p>
 
-      <form className="card addform admin-only" onSubmit={submit}>
-        <label>Name
-          <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} />
-        </label>
-        <div className="row">
-          <button type="button" className="btn" onClick={() => gallery.current.click()}>Choose photos</button>
-          <button type="button" className="btn" onClick={() => camera.current.click()}>Take photo</button>
-        </div>
-        <span className="muted">
-          {files.length ? `${files.length} ${files.length === 1 ? "photo" : "photos"} selected` : "No photos selected yet"}
-          {files.length > 0 && <> <button type="button" className="btn" onClick={() => setFiles([])}>Clear</button></>}
-        </span>
-        <label className="check agree"><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />This person agreed to be recognised</label>
-        <button className="btn primary" disabled={busy || !name || !files.length}>
-          {busy ? "Checking photos..." : "Add person"}
-        </button>
-      </form>
-      {err && <p className="note error" role="alert">{err}</p>}
+      <div className="stats s3">
+        <div className="card stat"><span>Total people</span><b>{people.length}</b></div>
+        <div className="card stat"><span>Ready profiles</span><b>{readyCount}</b><small>2 or more photos</small></div>
+        <div className="card stat"><span>With consent recorded</span><b>{consentCount}</b><small>Use Record consent on each card</small></div>
+      </div>
+
+      {err && !showAdd && <p className="note error" role="alert">{err}</p>}
       {delMsg && <p className="note" role="status">{delMsg}</p>}
       {notes.length > 0 && (
         <div className="note" role="status">
@@ -198,7 +210,7 @@ export default function People({ focus, onFocusDone }) {
                   <li key={i}>
                     <i aria-hidden="true" />
                     <div>
-                      <strong>{formatTime(v.start)}</strong>{v.active && <span className="tag-now">now</span>}
+                      <strong>{formatTime(v.start)}{v.active && <span className="tag-now">now</span>}</strong>
                       <span className="muted">Last seen {formatTime(v.end, false)} · {dur(v.seconds)} · {v.alerts} {v.alerts === 1 ? "alert" : "alerts"}</span>
                     </div>
                   </li>
@@ -209,7 +221,7 @@ export default function People({ focus, onFocusDone }) {
 
       {people.length > 0 && (
         <div className="pbar">
-          <input type="text" aria-label="Search people" placeholder="Search people" value={q}
+          <input type="search" className="search" aria-label="Search people" placeholder="Search people by name" value={q}
                  onChange={(e) => setQ(e.target.value)} />
           <span className="pcount">
             {q ? `${shown.length} of ${people.length}` : `${people.length} ${people.length === 1 ? "person" : "people"}`}
@@ -218,7 +230,7 @@ export default function People({ focus, onFocusDone }) {
       )}
 
       <ul className="pgrid">
-        {people.length === 0 && <li className="muted empty">No people yet. Add the first person above.</li>}
+        {people.length === 0 && <li className="muted empty">No people yet. Press Add person to register the first one.</li>}
         {people.length > 0 && shown.length === 0 && <li className="muted empty">No one matches "{q}".</li>}
         {shown.map((p) => {
           const s = stats[p.name];
@@ -227,7 +239,7 @@ export default function People({ focus, onFocusDone }) {
           return (
             <li key={p.name} className="card pcard">
               <div className="phead">
-                <img src={thumbUrl(p.name, version)} alt={`Photo of ${p.name}`} width="72" height="72" />
+                <img src={thumbUrl(p.name, version)} alt={`Photo of ${p.name}`} width="64" height="64" />
                 <div>
                   <strong>{p.name}{s?.active && <span className="tag-now">now</span>}</strong>
                   <span className="muted">{p.photos} {p.photos === 1 ? "photo" : "photos"}</span>
@@ -240,24 +252,102 @@ export default function People({ focus, onFocusDone }) {
                 <div><span>Last seen</span><b title={s?.last ? formatTime(s.last) : ""}>{s?.last ? ago(s.last) : "-"}</b></div>
               </div>
               {s?.first && <p className="pfirst">First seen {formatTime(s.first)}</p>}
-              <p className={`pconsent ${c && !c.consent ? "no" : ""}`}>
-                {c ? (c.consent ? `Consent recorded ${c.date}` : `No consent (marked ${c.date})`) : "Consent not recorded"}
+              <p className="pconsent">
+                <span className={`pill-s ${c ? (c.consent ? "ok" : "err") : "warn"}`}>
+                  {c ? (c.consent ? `Consent recorded ${c.date}` : `No consent (marked ${c.date})`) : "Consent not recorded"}
+                </span>
               </p>
               <div className="pact">
                 <button className="btn" onClick={() => showHistory(p.name)}>History</button>
                 <button className="btn admin-only" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
-                <button className="btn admin-only" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
-                <button className="btn admin-only" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
-              </div>
-              <div className="pact">
-                <button className="btn admin-only" disabled={busy} onClick={() => rename(p.name)}>Rename</button>
-                <button className="btn admin-only" disabled={busy} onClick={() => toggleConsent(p.name, c)}>{c && c.consent ? "Mark no consent" : "Record consent"}</button>
-                <button className="btn danger admin-only" disabled={busy} onClick={() => wipeData(p.name)}>Delete all data</button>
+                <div className="menu admin-only">
+                  <button className="btn" aria-haspopup="menu" aria-expanded={menu === p.name} onClick={() => setMenu(menu === p.name ? "" : p.name)}>More ▾</button>
+                  {menu === p.name && (
+                    <div className="menu-pop" role="menu">
+                      <button role="menuitem" disabled={busy} onClick={() => { setMenu(""); setRenaming({ name: p.name, value: p.name }); }}>Rename</button>
+                      <button role="menuitem" disabled={busy} onClick={() => { setMenu(""); addFor(p.name, personCam); }}>Take photo</button>
+                      <button role="menuitem" disabled={busy} onClick={() => { setMenu(""); toggleConsent(p.name, c); }}>{c && c.consent ? "Mark no consent" : "Record consent"}</button>
+                      <button role="menuitem" className="dng" disabled={busy} onClick={() => { setMenu(""); remove(p.name); }}>Remove (keep history)</button>
+                    </div>
+                  )}
+                </div>
+                <button className="btn danger-o admin-only" disabled={busy} onClick={() => setWiping({ name: p.name, typed: "" })}>Delete data</button>
               </div>
             </li>
           );
         })}
+        {people.length > 0 && !q && (
+          <li className="admin-only">
+            <button className="card addcard" style={{ width: "100%", height: "100%" }} onClick={() => { setErr(""); setShowAdd(true); }}>
+              <span><b>+ Add person</b>Name, clear front-facing photos and a consent tick</span>
+            </button>
+          </li>
+        )}
       </ul>
+
+      {showAdd && (
+        <Modal title="Add person" subtitle="Add 2 or 3 clear, front-facing photos. Only add people who agreed to be recognised." onClose={() => setShowAdd(false)}>
+          <form onSubmit={submit}>
+            <label>Name
+              <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} className={name === "" && err ? "bad" : ""} />
+            </label>
+            <div className="drop">
+              <div className="row">
+                <button type="button" className="btn" onClick={() => gallery.current.click()}>Choose photos</button>
+                <button type="button" className="btn" onClick={() => camera.current.click()}>Take photo</button>
+              </div>
+              <span>{files.length ? `${files.length} ${files.length === 1 ? "photo" : "photos"} selected` : "Clear, front-facing photos work best"}</span>
+            </div>
+            {previews.length > 0 && (
+              <div className="thumbs">
+                {previews.map((u, i) => (
+                  <div className="thumb" key={u}>
+                    <img src={u} alt={`Selected photo ${i + 1}`} />
+                    <button type="button" aria-label={`Remove photo ${i + 1}`} onClick={() => setFiles((f) => f.filter((_, k) => k !== i))}><X size={13} /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="check"><input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />This person agreed to be recognised</label>
+            {err && <p className="err-t" role="alert">{err}</p>}
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setShowAdd(false)}>Cancel</button>
+              <button className="btn primary" disabled={busy || !name.trim() || !files.length}>{busy ? "Checking photos..." : "Add person"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {renaming && (
+        <Modal title={`Rename ${renaming.name}`} onClose={() => setRenaming(null)}>
+          <form onSubmit={doRename}>
+            <label>New name
+              <input value={renaming.value} onChange={(e) => setRenaming({ ...renaming, value: e.target.value })} required maxLength={40} />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setRenaming(null)}>Cancel</button>
+              <button className="btn primary" disabled={busy || !renaming.value.trim()}>Rename</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {wiping && (
+        <Modal title={`Delete all data of ${wiping.name}?`} onClose={() => setWiping(null)}>
+          <form onSubmit={doWipe}>
+            <p className="modal-warn" style={{ margin: 0 }}>
+              This permanently deletes photos, alerts, pictures, visit history, notices, attendance setup and the consent record. It cannot be undone.
+            </p>
+            <label>Type the name "{wiping.name}" to confirm
+              <input value={wiping.typed} onChange={(e) => setWiping({ ...wiping, typed: e.target.value })} autoComplete="off" />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setWiping(null)}>Cancel</button>
+              <button className="btn danger" disabled={busy || wiping.typed.trim().toLowerCase() !== wiping.name.toLowerCase()}>Delete all data</button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </section>
   );
 }

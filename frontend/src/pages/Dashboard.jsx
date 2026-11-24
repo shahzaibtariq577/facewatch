@@ -86,6 +86,8 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
   const badRange = custom && (!from || !to || from > to);
   const [selected, setSelected] = useState(null);
   const [camera, setCamera] = useState("");
+  const [hq, setHq] = useState("");
+  const [hpage, setHpage] = useState(0);
   const [err, setErr] = useState("");
   const toast = useToast();
   const [health, setHealth] = useState(null);
@@ -116,6 +118,12 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
 
   if (!d) return <p className="muted">{err || "Loading..."}</p>;
   const sel = d.history.find((r) => r.id === selected);
+  const hneedle = hq.trim().toLowerCase();
+  const hfiltered = d.history.filter((r) => !hneedle || r.name.toLowerCase().includes(hneedle) || (r.source || "").toLowerCase().includes(hneedle) || formatTime(r.time).toLowerCase().includes(hneedle));
+  const HPAGE = 10;
+  const hpages = Math.max(1, Math.ceil(hfiltered.length / HPAGE));
+  const hcur = Math.min(hpage, hpages - 1);
+  const hrows = hfiltered.slice(hcur * HPAGE, hcur * HPAGE + HPAGE);
   const present = d.visits.filter((v) => v.active);
   const rangeLabel = RANGES.find(([v]) => v === days)[1];
   const prevLabel = days === 1 ? "yesterday" : `the previous ${d.span_days} days`;
@@ -126,7 +134,10 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
   return (
     <section>
       <header className="head">
-        <h2>Dashboard</h2>
+        <div>
+          <h2>Dashboard</h2>
+          <p className="muted">Overview of monitoring activity and recognition statistics.</p>
+        </div>
         <div className="row">
           <div className="seg" role="group" aria-label="Date range">
             {RANGES.map(([v, l]) => (
@@ -141,7 +152,7 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
             </>
           )}
           <a className="btn" href="/api/alerts/export" download>Export CSV</a>
-          <button className="btn admin-only" onClick={clear}>Clear history</button>
+          <button className="btn danger-o admin-only" onClick={clear}>Clear history</button>
         </div>
       </header>
 
@@ -296,12 +307,16 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
       <div className="grid2">
         <div className="card">
           <h3>Alert history, newest first</h3>
+          <div className="row no-print" style={{ marginBottom: 10 }}>
+            <input type="search" className="search" aria-label="Search alert history" placeholder="Search person, camera or date" value={hq}
+                   onChange={(e) => { setHq(e.target.value); setHpage(0); }} />
+          </div>
           <div className="scroll">
             <table className="clickable">
               <thead><tr><th></th><th>Time</th><th>Person</th><th>Score</th><th>Source</th></tr></thead>
               <tbody>
-                {d.history.length === 0 && <tr><td colSpan="5" className="muted">No alerts yet.</td></tr>}
-                {d.history.map((r) => (
+                {hfiltered.length === 0 && <tr><td colSpan="5" className="muted">{d.history.length === 0 ? "No alerts yet." : "Nothing matches your search."}</td></tr>}
+                {hrows.map((r) => (
                   <tr key={r.id} className={r.id === selected ? "sel" : ""} tabIndex={0}
                       onClick={() => setSelected(r.id)}
                       onKeyDown={(e) => e.key === "Enter" && setSelected(r.id)}>
@@ -310,6 +325,13 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="pager">
+            <span>Page {hcur + 1} of {hpages}</span>
+            <span className="row">
+              <button className="btn btn-sm" disabled={hcur === 0} onClick={() => setHpage(hcur - 1)} aria-label="Previous page">‹</button>
+              <button className="btn btn-sm" disabled={hcur >= hpages - 1} onClick={() => setHpage(hcur + 1)} aria-label="Next page">›</button>
+            </span>
           </div>
         </div>
         <div className="card">
