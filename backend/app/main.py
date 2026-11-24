@@ -90,10 +90,11 @@ def resume():
 
 
 @app.get("/api/stream")
-def stream():
+def stream(lane: int = -1):
+    """The live picture. Grid mode: all cameras in one picture, or one camera with ?lane=0, 1, 2 or 3."""
     if not engine.running:
         raise HTTPException(409, "Not watching.")
-    return StreamingResponse(engine.frames(), media_type="multipart/x-mixed-replace; boundary=frame",
+    return StreamingResponse(engine.frames(lane), media_type="multipart/x-mixed-replace; boundary=frame",
                              headers={"Cache-Control": "no-store"})
 
 

@@ -6,6 +6,8 @@ averaged over the last few frames so a single odd frame cannot raise an alert.
 v6: visits, "not seen" notices, Telegram alerts, photo quality check.
 v12: "Not recognised" events (a face that stays in view and matches nobody).
 v12 (2B): notification centre (people, camera and system notices are saved to a file).
+v21 (3E): several cameras at once (one worker per camera, "grid mode"). With grid mode off, one camera
+is watched exactly as before.
 """
 import os
 import re
@@ -28,6 +30,8 @@ MIN_FRAMES = 3        # a face needs this many scores before it can match
 LOST_AFTER = 10       # forget a face after this many frames without it
 UNKNOWN_AFTER = 15    # an unmatched face must stay in view this many frames before it is saved
 UNKNOWN_MIN_FACE = 50 # ignore very small faces (pixels, on the 640 wide picture)
+MULTI_MIN_GAP = 0.1   # grid mode: each camera is checked at most 10 times a second
+TILE_W, TILE_H = 480, 360   # size of one camera tile in the grid picture
 
 
 class StartError(Exception):
@@ -89,33 +93,65 @@ def check_photo(img):
     return True, "; ".join(notes)
 
 
-class Engine:
-    def __init__(self, cfg: dict):
-        self.cfg = cfg                     # shared with the API; changes apply live
-        self.people = {}                   # name -> BGR images
-        self.people_count = 0
-        self.people_dirty = True
-        self.models_ready = False
-        self.models_error = ""
+class Lane:
+    """One camera that is being watched (a worker thread plus its own picture and numbers)."""
 
-        self.stop_event = threading.Event()
+    def __init__(self, idx, source, label, name, location, stop):
+        self.idx = idx
+        self.source = source
+        self.label = label            # the name written into alerts and the log
+        self.name = name
+        self.location = location
+        self.stop = stop              # set when watching stops
         self.thread = None
-        self.running = False
-        self.state = "loading"             # loading|stopped|starting|running|reconnecting|error
+        self.done = False
+        self.state = "starting"       # starting|running|reconnecting|error|stopped
         self.note = ""
         self.fps = 0.0
         self.faces = 0
         self.best = 0.0
         self.matched = []
+        self.res = ""
+        self.cam_down = False
+        self.last_proc = 0.0
+        self.last_unknown_ts = 0.0
+        self.version = -1             # which version of the saved people its references were built from
+        self.frame = None
+        self.frame_id = 0
+        self.cond = threading.Condition()
+
+    def publish(self, frame):
+        with self.cond:
+            self.frame = frame
+            self.frame_id += 1
+            self.cond.notify_all()
+
+
+def _ascii(text):
+    return str(text).encode("ascii", "replace").decode()
+
+
+class Engine:
+    def __init__(self, cfg: dict):
+        self.cfg = cfg                     # shared with the API; changes apply live
+        self.people = {}                   # name -> BGR images
+        self.people_count = 0
+        self.people_version = 0            # goes up when the saved people change
+        self.models_ready = False
+        self.models_error = ""
+
+        self.stop_event = threading.Event()
+        self.lanes = []                    # the cameras of this run (one when grid mode is off)
+        self.multi = False                 # True when several cameras are watched at once
+        self.running = False
+        self.state = "loading"             # loading|stopped|error (while running, the state comes from the cameras)
+        self.note = ""
         self.source = 0
         self.source_label = ""
         self.paused = False                # watching is on, but nobody is checked
-        self.res = ""                      # camera picture size, e.g. 1280x720
 
         self.notif_seq = 0                 # goes up each time a notification is saved
-        self.cam_down = False              # True while the camera is disconnected
         self.unknown_seq = 0               # goes up each time a "Not recognised" event is saved
-        self.last_unknown_ts = 0.0
         self.alert_seq = 0
         self.last_alert = None
         self.last_alert_ts = 0.0
@@ -123,13 +159,11 @@ class Engine:
         # v6: notices (visit start, not seen, back in view), kept in memory
         self.events = deque(maxlen=50)
         self.event_seq = 0
-        self.last_seen = {}                # name -> time last matched
+        self.last_seen = {}                # name -> time last matched (by any camera)
         self.missing = set()               # names currently flagged "not seen"
         self.started_at = time.time()
-
-        self._cond = threading.Condition()
-        self._jpeg = None
-        self._frame_id = 0
+        self._alert_at = {}                # name -> time of the last alert (by any camera)
+        self._lock = threading.RLock()     # protects what all cameras share
 
     # ----------------------------------------------------------- setup
     def load_models(self):
@@ -146,7 +180,7 @@ class Engine:
     def reload_people(self):
         self.people = st.load_people()
         self.people_count = len(self.people)
-        self.people_dirty = True
+        self.people_version += 1
 
     # --------------------------------------------------------- control
     def resolve_source(self):
@@ -164,6 +198,52 @@ class Engine:
             return url, re.sub(r"//[^@/]*@", "//", url)      # never show passwords
         return int(c["cam_index"]), f"Camera {int(c['cam_index'])}"
 
+    @staticmethod
+    def _source_of(c):
+        """Source of a saved camera (3D). Raises StartError with a friendly message."""
+        if c["kind"] == "video":
+            if not c.get("path") or not os.path.exists(c["path"]):
+                raise StartError(f"{c['name']}: video file not found.")
+            return c["path"]
+        if c["kind"] == "network":
+            if not c.get("url"):
+                raise StartError(f"{c['name']}: type the network camera address on the Cameras page.")
+            return c["url"]
+        return int(c.get("index", 0))
+
+    def _plan(self):
+        """(multi, [camera specs]) for the next run."""
+        cams = None
+        try:
+            from . import cams
+        except Exception:
+            pass
+        if cams is not None:
+            try:
+                grid = cams.multi_on()
+            except Exception:
+                grid = False
+            if grid:
+                watch = cams.watch_list(self.cfg)
+                if not watch:
+                    raise StartError("Grid mode is on, but no camera has Watch ticked. Tick Watch on the Cameras page, "
+                                     "or turn off \"Watch several cameras at once\".")
+                specs, seen = [], set()
+                for c in watch:
+                    src = self._source_of(c)
+                    if repr(src) in seen:
+                        raise StartError(f"{c['name']} uses the same source as another watched camera. "
+                                         "Each camera needs its own webcam number or address.")
+                    seen.add(repr(src))
+                    specs.append({"source": src, "label": c["name"], "name": c["name"], "location": c.get("location", "")})
+                return True, specs
+        source, label = self.resolve_source()
+        try:                       # 3F: alerts and reports name the saved camera
+            label = cams.active_name(self.cfg) or label
+        except Exception:
+            pass
+        return False, [{"source": source, "label": label, "name": label, "location": ""}]
+
     def start(self):
         if self.running:
             return
@@ -171,39 +251,41 @@ class Engine:
             raise StartError("Add at least one person with a clear photo first.")
         if not self.models_ready:
             raise StartError("The face models are still loading.")
-        self.source, self.source_label = self.resolve_source()
-        try:                       # 3F: alerts and reports name the saved camera
-            from . import cams
-            self.source_label = cams.active_name(self.cfg) or self.source_label
-        except Exception:
-            pass
-        self.people_dirty = True       # every new run must rebuild the face references
-        self.stop_event.clear()
+        multi, specs = self._plan()
+        self.multi = multi
+        self.source = specs[0]["source"]
+        self.source_label = ", ".join(s["name"] for s in specs) if multi else specs[0]["label"]
+        self.stop_event = threading.Event()          # a new one, so an old worker can never wake up again
         self.paused = False
         self.running = True
         self.state = "starting"
         self.note = ""
-        self.last_seen, self.missing = {}, set()
+        self.last_seen, self.missing, self._alert_at = {}, set(), {}
         self.started_at = time.time()
-        self.cam_down = False
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
+        self.lanes = [Lane(i, s["source"], s["label"], s["name"], s["location"], self.stop_event)
+                      for i, s in enumerate(specs)]
+        for lane in self.lanes:
+            t = threading.Thread(target=self._worker, args=(lane,), daemon=True)
+            t.start()
+            lane.thread = t
         self._note("system", "start", f"Watching started ({self.source_label}).")
 
     def stop(self):
         was_running = self.running
         self.stop_event.set()
-        t = self.thread
-        if t and t.is_alive():
-            t.join(timeout=3)
+        for lane in list(self.lanes):
+            t = lane.thread
+            if t and t.is_alive():
+                t.join(timeout=3)
         self.running = False
         self.paused = False
-        self.res = ""
         if self.state != "error":
             self.state = "stopped"
-        self.matched, self.faces, self.fps = [], 0, 0.0
-        with self._cond:
-            self._cond.notify_all()
+        for lane in list(self.lanes):
+            lane.matched, lane.faces, lane.fps, lane.res = [], 0, 0.0, ""
+            with lane.cond:
+                lane.frame = None
+                lane.cond.notify_all()
         if was_running:
             self._note("system", "stop", "Watching stopped.")
 
@@ -211,28 +293,47 @@ class Engine:
         """Keep the camera connected but stop checking faces and sending alerts."""
         if self.running and not self.paused:
             self.paused = True
-            self.matched, self.faces, self.best = [], 0, 0.0
+            for lane in self.lanes:
+                lane.matched, lane.faces, lane.best = [], 0, 0.0
             self._note("system", "pause", "Monitoring paused. No faces are checked.")
 
     def resume(self):
         if self.paused:
-            self.last_seen, self.missing = {}, set()     # the "not seen" timers start again
-            self.started_at = time.time()
+            with self._lock:
+                self.last_seen, self.missing = {}, set()     # the "not seen" timers start again
+                self.started_at = time.time()
             self.paused = False
             self._note("system", "resume", "Monitoring resumed.")
 
     def status(self):
-        if self.running and self.thread and not self.thread.is_alive():
+        lanes = list(self.lanes)
+        if self.running and lanes and not any(l.thread is None or l.thread.is_alive() for l in lanes):
             self.running = False
             if self.state != "error":
                 self.state = "stopped"
         now = time.time()
+        run = self.running and bool(lanes)
+        state, note = self.state, self.note
+        if run:
+            states = [l.state for l in lanes]
+            state = next((s for s in ("running", "reconnecting", "starting", "error") if s in states), self.state)
+            notes = [(f"{l.name}: {l.note}" if self.multi else l.note) for l in lanes if l.note]
+            note = notes[0] if notes else ""
+        live = [l for l in lanes if l.state == "running"] if run else []
         return {
-            "running": self.running, "paused": self.paused, "resolution": self.res,
-            "state": self.state, "note": self.note,
+            "running": self.running, "paused": self.paused,
+            "resolution": lanes[0].res if run and not self.multi else "",
+            "state": state, "note": note,
             "models_ready": self.models_ready, "people": self.people_count,
-            "fps": round(self.fps, 1), "faces": self.faces, "best": round(self.best, 2),
-            "matched": list(self.matched), "source": self.source_label,
+            "fps": round(sum(l.fps for l in live) / len(live), 1) if live else 0.0,
+            "faces": sum(l.faces for l in lanes) if run else 0,
+            "best": round(max((l.best for l in lanes), default=0.0), 2) if run else 0.0,
+            "matched": sorted({m for l in lanes for m in l.matched}) if run else [],
+            "source": self.source_label,
+            "multi": bool(self.multi and run),
+            "lanes": [{"id": l.idx, "name": l.name, "location": l.location, "state": l.state, "note": l.note,
+                       "fps": round(l.fps, 1), "faces": l.faces, "matched": list(l.matched), "resolution": l.res}
+                      for l in lanes] if run else [],
             "alert_seq": self.alert_seq, "last_alert": self.last_alert,
             "alert_age": round(now - self.last_alert_ts, 1) if self.last_alert else None,
             "missing": sorted(self.missing),
@@ -244,25 +345,72 @@ class Engine:
         }
 
     # ---------------------------------------------------------- stream
-    def frames(self):
-        """MJPEG chunks for as long as the engine runs."""
+    @staticmethod
+    def _chunk(jpeg):
+        return b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + \
+               str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n"
+
+    def frames(self, lane=-1):
+        """MJPEG chunks for as long as the engine runs. In grid mode: one picture with all cameras,
+        or one camera when lane is given. With one camera: that camera."""
+        lanes = list(self.lanes)
+        if not lanes:
+            return iter(())
+        if self.multi and not 0 <= lane < len(lanes):
+            return self._mosaic_frames()
+        return self._lane_frames(lanes[lane] if 0 <= lane < len(lanes) else lanes[0])
+
+    def _lane_frames(self, lane):
         last = -1
         while self.running:
-            with self._cond:
-                self._cond.wait_for(lambda: self._frame_id != last or not self.running, timeout=2)
-                jpeg, last = self._jpeg, self._frame_id
-            if jpeg is None:
+            with lane.cond:
+                lane.cond.wait_for(lambda: lane.frame_id != last or not self.running, timeout=2)
+                frame, last = lane.frame, lane.frame_id
+            if frame is None:
                 continue
-            yield b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: " + \
-                  str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n"
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if ok:
+                yield self._chunk(buf.tobytes())
 
-    def _publish(self, frame):
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        if ok:
-            with self._cond:
-                self._jpeg = buf.tobytes()
-                self._frame_id += 1
-                self._cond.notify_all()
+    def _mosaic_frames(self):
+        last_ids, last_t = None, 0.0
+        while self.running:
+            lanes = list(self.lanes)
+            ids = tuple(l.frame_id for l in lanes)
+            if ids != last_ids or time.time() - last_t > 1.0:
+                last_ids, last_t = ids, time.time()
+                ok, buf = cv2.imencode(".jpg", self._mosaic(lanes), [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ok:
+                    yield self._chunk(buf.tobytes())
+            time.sleep(0.07)
+
+    def _mosaic(self, lanes):
+        """All cameras in one picture: 1 camera = big, 2 = side by side, 3 or 4 = 2x2."""
+        n = max(1, len(lanes))
+        cols = 1 if n == 1 else 2
+        rows = (n + cols - 1) // cols
+        tw, th = (640, 480) if n == 1 else (TILE_W, TILE_H)
+        canvas = np.full((rows * th, cols * tw, 3), 16, dtype=np.uint8)
+        for i, lane in enumerate(lanes):
+            x0, y0 = (i % cols) * tw, (i // cols) * th
+            frame = lane.frame if lane.state in ("running", "starting") else None
+            if frame is not None:
+                fh, fw = frame.shape[:2]
+                s = min(tw / fw, th / fh)
+                small = cv2.resize(frame, (max(1, int(fw * s)), max(1, int(fh * s))))
+                sh, sw = small.shape[:2]
+                canvas[y0 + (th - sh) // 2:y0 + (th - sh) // 2 + sh, x0 + (tw - sw) // 2:x0 + (tw - sw) // 2 + sw] = small
+            else:
+                msg = {"reconnecting": "Reconnecting...", "error": "Camera problem"}.get(lane.state, "No picture")
+                cv2.putText(canvas, msg, (x0 + 20, y0 + th // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (200, 200, 200), 2, cv2.LINE_AA)
+            cv2.rectangle(canvas, (x0, y0), (x0 + tw, y0 + 26), (0, 0, 0), -1)
+            title = _ascii(lane.name + (f" - {lane.location}" if lane.location else ""))
+            cv2.putText(canvas, title, (x0 + 8, y0 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            if lane.state == "running":
+                cv2.putText(canvas, f"{lane.fps:.0f} FPS", (x0 + tw - 70, y0 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                            (190, 190, 190), 1, cv2.LINE_AA)
+            cv2.rectangle(canvas, (x0, y0), (x0 + tw - 1, y0 + th - 1), (60, 60, 60), 1)
+        return canvas
 
     # ---------------------------------------------------------- notices
     def _event(self, kind, name, text):
@@ -279,15 +427,15 @@ class Engine:
         except Exception:
             pass
 
-    def _cam_lost(self):
-        if not self.cam_down:
-            self.cam_down = True
-            self._note("camera", "lost", f"Camera disconnected ({self.source_label}). Trying to reconnect.")
+    def _cam_lost(self, lane):
+        if not lane.cam_down:
+            lane.cam_down = True
+            self._note("camera", "lost", f"Camera disconnected ({lane.label}). Trying to reconnect.")
 
-    def _cam_back(self):
-        if self.cam_down:
-            self.cam_down = False
-            self._note("camera", "back", f"Camera reconnected ({self.source_label}).")
+    def _cam_back(self, lane):
+        if lane.cam_down:
+            lane.cam_down = False
+            self._note("camera", "back", f"Camera reconnected ({lane.label}).")
 
     def _send(self, name, text, photo=None, tags=None):
         """Phone message, unless 'Ignore' is on for everyone or for this person."""
@@ -295,7 +443,7 @@ class Engine:
             return
         notify.send_async(self.cfg, text, photo, tags)
 
-    def _new_visit(self, name, score, crop):
+    def _new_visit(self, lane, name, score, crop):
         """A person appeared after being away longer than the visit gap."""
         if quiet.person_muted(name):
             return                       # ignored person: the visit is still logged by the alert
@@ -308,7 +456,7 @@ class Engine:
             photo = buf.tobytes() if ok else None
         stamp = datetime.now().strftime("%H:%M:%S")
         self._send(name, f"FaceWatch: {name} seen at {stamp} "
-                         f"({self.source_label}). Score {score:.2f}.", photo)
+                         f"({lane.label}). Score {score:.2f}.", photo)
 
     def _went_missing(self, name, minutes):
         self.missing.add(name)
@@ -319,11 +467,11 @@ class Engine:
             self._send(name, f"FaceWatch: {name} has not been seen for {minutes} minutes.", tags=["warning"])
 
     # ---------------------------------------------------------- unknown
-    def _unknown(self, score, frame, face):
+    def _unknown(self, lane, score, frame, face):
         """Save a 'Not recognised' event. This is only a note that a face did not match
         anyone saved. It does not say who the person is or that anything is wrong."""
         try:
-            st.add_unknown(datetime.now(), face, frame, score, self.source_label,
+            st.add_unknown(datetime.now(), face, frame, score, lane.label,
                            save_full=bool(self.cfg.get("save_full_frame", True)))
             self.unknown_seq += 1
             self._event("unknown", "", "A face was not recognised. Review it on the Not recognised page.")
@@ -334,13 +482,13 @@ class Engine:
                     photo = buf.tobytes() if ok else None
                 stamp = datetime.now().strftime("%H:%M:%S")
                 self._send("", f"FaceWatch: a face was not recognised at {stamp} "
-                               f"({self.source_label}). It does not match anyone saved.",
+                               f"({lane.label}). It does not match anyone saved.",
                            photo, tags=["grey_question"])
         except Exception as e:
-            self.note = f"Could not save a Not recognised event: {e}"
+            lane.note = f"Could not save a Not recognised event: {e}"
 
     # ---------------------------------------------------------- alerts
-    def _alert(self, name, score, frame, face=None, pics=True):
+    def _alert(self, lane, name, score, frame, face=None, pics=True):
         stamp = datetime.now()
         snap = ""
         try:
@@ -351,13 +499,13 @@ class Engine:
                     st.write_image(os.path.join(st.MATCH_DIR, snap), frame, 75)
                 if face is not None and face.size:
                     st.write_image(os.path.join(st.MATCH_DIR, st.FACE_PREFIX + snap), face, 88)
-            st.log_alert(stamp, name, score, snap, self.source_label)
-            if self.state != "error":
-                self.note = ""
+            st.log_alert(stamp, name, score, snap, lane.label)
+            if lane.state != "error":
+                lane.note = ""
         except PermissionError:
-            self.note = "Could not write match_log.csv (is it open in Excel?)"
+            lane.note = "Could not write match_log.csv (is it open in Excel?)"
         except Exception as e:
-            self.note = f"Could not save alert: {e}"
+            lane.note = f"Could not save alert: {e}"
         self.last_alert = {"name": name, "score": round(score, 2), "time": stamp.strftime(st.TIME_FMT)}
         self.last_alert_ts = time.time()
         self.alert_seq += 1
@@ -381,48 +529,76 @@ class Engine:
                 problems.append(name)
         return refs, problems
 
-    def _worker(self):
+    def _worker(self, lane):
+        try:
+            self._run(lane)
+        except Exception as e:                 # a camera must never die silently
+            lane.state, lane.note = "error", f"This camera stopped: {e}"
+            self._note("camera", "error", f"{lane.label}: {lane.note}")
+        finally:
+            self._lane_done(lane)
+
+    def _lane_done(self, lane):
+        with self._lock:
+            lane.matched, lane.faces, lane.fps = [], 0, 0.0
+            if lane.state != "error":
+                lane.state = "stopped"
+            lane.done = True
+            if all(l.done for l in self.lanes):          # the last camera finished: the whole run is over
+                self.running = False
+                bad = next((l for l in self.lanes if l.state == "error"), None)
+                if bad:
+                    self.state, self.note = "error", bad.note
+                elif self.state != "error":
+                    self.state = "stopped"
+
+    def _run(self, lane):
         try:
             detector = cv2.FaceDetectorYN.create(st.model_path("yunet"), "", (320, 320), 0.7, 0.3, 5000)
             recognizer = cv2.FaceRecognizerSF.create(st.model_path("sface"), "")
         except Exception as e:
-            self.state, self.note, self.running = "error", f"Could not start the face models: {e}", False
+            lane.state, lane.note = "error", f"Could not start the face models: {e}"
             return
 
-        live = isinstance(self.source, int) or str(self.source).lower().startswith(("http", "rtsp", "rtmp"))
+        stop = lane.stop
+        live = isinstance(lane.source, int) or str(lane.source).lower().startswith(("http", "rtsp", "rtmp"))
         refs, base_note = {}, ""
         tracks, next_id, frame_no = {}, 0, 0
-        last_alert = {}
         prev, fps = time.time(), 0.0
 
-        while not self.stop_event.is_set():
-            cap = cv2.VideoCapture(self.source)
+        while not stop.is_set():
+            cap = cv2.VideoCapture(lane.source)
             if not cap.isOpened():
                 cap.release()
                 if live and self.cfg["auto_reconnect"]:
-                    self._cam_lost()
-                    self.state, self.note = "reconnecting", "Camera not available. Retrying..."
-                    self.stop_event.wait(2.0)
+                    self._cam_lost(lane)
+                    lane.state, lane.note = "reconnecting", "Camera not available. Retrying..."
+                    stop.wait(2.0)
                     continue
-                self.state, self.note = "error", "Could not open the camera or video. Check Settings."
-                self._note("camera", "error", f"Could not open the camera or video ({self.source_label}).")
+                lane.state, lane.note = "error", "Could not open the camera or video. Check Settings or the Cameras page."
+                self._note("camera", "error", f"Could not open the camera or video ({lane.label}).")
                 break
             try:
                 cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # less delay on network cameras
             except Exception:
                 pass
-            self.state, self.note = "running", base_note
-            self._cam_back()
+            lane.state, lane.note = "running", base_note
+            self._cam_back(lane)
             try:
-                self.res = f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
+                lane.res = f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"
             except Exception:
-                self.res = ""
-            self.started_at = time.time()    # "not seen" countdown restarts after a reconnect
+                lane.res = ""
+            if len(self.lanes) == 1:
+                self.started_at = time.time()    # "not seen" countdown restarts after a reconnect (one camera only)
 
-            while not self.stop_event.is_set():
+            while not stop.is_set():
                 ok, frame = cap.read()
                 if not ok:
                     break
+                if self.multi:                   # grid mode: skip frames so several cameras do not overload the computer
+                    if time.time() - lane.last_proc < MULTI_MIN_GAP:
+                        continue
+                    lane.last_proc = time.time()
                 frame = cv2.resize(frame, (FRAME_WIDTH, int(frame.shape[0] * FRAME_WIDTH / frame.shape[1])))
                 h, w = frame.shape[:2]
 
@@ -432,18 +608,19 @@ class Engine:
                     cv2.putText(shot, "Monitoring paused", (max(w // 2 - 130, 10), h // 2),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (220, 220, 220), 2, cv2.LINE_AA)
                     tracks.clear()
-                    self.matched, self.faces, self.best = [], 0, 0.0
+                    lane.matched, lane.faces, lane.best = [], 0, 0.0
                     prev = time.time()
-                    self._publish(shot)
+                    lane.publish(shot)
                     continue
 
-                if self.people_dirty:
-                    self.people_dirty = False
+                if lane.version != self.people_version:
+                    lane.version = self.people_version
                     tracks.clear()
                     refs, problems = self._build_refs(detector, recognizer)
                     base_note = ("No face found in photos of: " + ", ".join(problems)) if problems else ""
-                    self.note = base_note
-                    self.missing &= set(refs)            # forget removed people
+                    lane.note = base_note
+                    with self._lock:
+                        self.missing &= set(refs)            # forget removed people
 
                 detector.setInputSize((w, h))
                 _, faces = detector.detect(frame)
@@ -524,61 +701,57 @@ class Engine:
 
                 now_t = time.time()
 
-                # "Not recognised" events (one per face, and not more often than unknown_gap seconds)
-                if unknown_new and now_t - self.last_unknown_ts >= self.cfg.get("unknown_gap", 60):
-                    self.last_unknown_ts = now_t
+                # "Not recognised" events (one per face, and not more often than unknown_gap seconds, per camera)
+                if unknown_new and now_t - lane.last_unknown_ts >= self.cfg.get("unknown_gap", 60):
+                    lane.last_unknown_ts = now_t
                     for ut, uscore, ucrop in unknown_new:
                         ut["unk"] = True
-                        self._unknown(uscore, frame, ucrop)
+                        self._unknown(lane, uscore, frame, ucrop)
 
-                # visits: a person back after more than the gap starts a new visit
-                visit_gap = max(self.cfg.get("visit_gap", 120), 2 * self.cfg["alert_interval"])
-                for pname, score in matched.items():
-                    prev_seen = self.last_seen.get(pname)
-                    self.last_seen[pname] = now_t
-                    if pname in self.missing:
-                        self.missing.discard(pname)
-                        if not quiet.person_muted(pname):
-                            self._event("back", pname, f"{pname} is back in view.")
-                    if prev_seen is None or now_t - prev_seen > visit_gap:
-                        self._new_visit(pname, score, crops.get(pname))
+                # visits, "not seen" and alerts are shared by all cameras: one person is one visit
+                with self._lock:
+                    visit_gap = max(self.cfg.get("visit_gap", 120), 2 * self.cfg["alert_interval"])
+                    for pname, score in matched.items():
+                        prev_seen = self.last_seen.get(pname)
+                        self.last_seen[pname] = now_t
+                        if pname in self.missing:
+                            self.missing.discard(pname)
+                            if not quiet.person_muted(pname):
+                                self._event("back", pname, f"{pname} is back in view.")
+                        if prev_seen is None or now_t - prev_seen > visit_gap:
+                            self._new_visit(lane, pname, score, crops.get(pname))
 
-                # not-seen notice
-                minutes = self.cfg.get("not_seen_minutes", 0)
-                if minutes:
-                    for pname in refs:
-                        since = max(self.last_seen.get(pname, 0.0), self.started_at)
-                        if pname not in self.missing and now_t - since >= minutes * 60:
-                            self._went_missing(pname, minutes)
+                    # not-seen notice
+                    minutes = self.cfg.get("not_seen_minutes", 0)
+                    if minutes:
+                        for pname in refs:
+                            since = max(self.last_seen.get(pname, 0.0), self.started_at)
+                            if pname not in self.missing and now_t - since >= minutes * 60:
+                                self._went_missing(pname, minutes)
 
-                # regular alerts: again every N seconds while the person stays in view
-                for pname, score in matched.items():
-                    since = now_t - last_alert.get(pname, 0)
-                    if since >= self.cfg["alert_interval"]:
-                        last_alert[pname] = now_t
-                        # pictures_once: only the first alert of a visit gets a picture
-                        pics = (not self.cfg.get("pictures_once", False)) or since > visit_gap
-                        self._alert(pname, score, frame, crops.get(pname), pics)
+                    # regular alerts: again every N seconds while the person stays in view
+                    for pname, score in matched.items():
+                        since = now_t - self._alert_at.get(pname, 0)
+                        if since >= self.cfg["alert_interval"]:
+                            self._alert_at[pname] = now_t
+                            # pictures_once: only the first alert of a visit gets a picture
+                            pics = (not self.cfg.get("pictures_once", False)) or since > visit_gap
+                            self._alert(lane, pname, score, frame, crops.get(pname), pics)
 
                 now = time.time()
                 fps = 0.9 * fps + 0.1 * (1 / max(now - prev, 1e-3))
                 prev = now
-                self.fps, self.faces, self.best, self.matched = fps, n_faces, best, sorted(matched)
-                self._publish(frame)
+                lane.fps, lane.faces, lane.best, lane.matched = fps, n_faces, best, sorted(matched)
+                lane.publish(frame)
 
             cap.release()
-            if self.stop_event.is_set():
+            if stop.is_set():
                 break
             if live and self.cfg["auto_reconnect"]:
-                self._cam_lost()
-                self.state, self.note = "reconnecting", "Connection lost. Reconnecting..."
-                self.stop_event.wait(2.0)
+                self._cam_lost(lane)
+                lane.state, lane.note = "reconnecting", "Connection lost. Reconnecting..."
+                stop.wait(2.0)
                 continue
-            self.note = "Connection lost." if live else "Video finished."
-            self._note("camera" if live else "system", "lost" if live else "end", self.note)
+            lane.note = "Connection lost." if live else "Video finished."
+            self._note("camera" if live else "system", "lost" if live else "end", f"{lane.label}: {lane.note}")
             break
-
-        self.matched, self.faces, self.fps = [], 0, 0.0
-        self.running = False
-        if self.state != "error":
-            self.state = "stopped"

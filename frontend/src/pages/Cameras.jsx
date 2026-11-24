@@ -51,9 +51,22 @@ export default function Cameras() {
       </header>
       <p className="muted lede">
         Save each camera with a name and a place, for example Entrance or Office. Pick the one to watch with "Use this camera",
-        or on the Live page. FaceWatch watches one camera at a time for now. You can save up to {data.max}.
+        or on the Live page. Normally FaceWatch watches one camera. Turn on grid mode below to watch several at once. You can save up to {data.max}.
       </p>
-      {data.running && <p className="note">Watching is on. Stop watching on the Live page before you choose a different camera.</p>}
+      {data.running && <p className="note">Watching is on. Stop watching on the Live page before you choose a different camera or change grid mode.</p>}
+      <div className="card setgroup">
+        <h3>Grid mode</h3>
+        <label className="check">
+          <input type="checkbox" checked={!!data.multi} disabled={busy || data.running}
+                 onChange={(e) => run(() => api.setCamMode(e.target.checked), e.target.checked ? "Grid mode on" : "Grid mode off")} />
+          Watch several cameras at once (up to {data.max_watch})
+        </label>
+        <p className="muted">
+          Tick <b>Watch</b> on each camera below. The Live page then shows them together in a grid. It applies the next time you press Start.
+          Each camera needs its own webcam number or address. More cameras use more of your computer, so each one is checked about 10 times a second.
+          With grid mode off, FaceWatch watches only the camera marked "in use".
+        </p>
+      </div>
       {err && <p className="note error" role="alert">{err}</p>}
 
       {form && (
@@ -102,7 +115,7 @@ export default function Cameras() {
           <li key={c.id} className={`card camitem ${c.active ? "on" : ""}`}>
             <span className="camicon" aria-hidden="true"><Camera size={20} /></span>
             <div className="cambody">
-              <strong>{c.name}</strong>{c.active && <span className="tag-now">in use</span>}
+              <strong>{c.name}</strong>{!data.multi && c.active && <span className="tag-now">in use</span>}{data.multi && c.watch && <span className="tag-now">in grid</span>}
               <span className="muted">{c.location || "No location"} · {KIND_LABEL[c.kind]} · {c.source}</span>
             </div>
             <div className="camact">
@@ -114,6 +127,11 @@ export default function Cameras() {
                 </>
               ) : (
                 <>
+                  <label className="check">
+                    <input type="checkbox" checked={!!c.watch} disabled={busy || data.running}
+                           onChange={(e) => run(() => api.watchCam(c.id, e.target.checked), e.target.checked ? `${c.name} will be watched in the grid` : `${c.name} is not in the grid`)} />
+                    Watch
+                  </label>
                   <button className="btn" disabled={busy || c.active || data.running} onClick={() => run(() => api.useCam(c.id), `Now using ${c.name}`)}
                           title={data.running ? "Stop watching first" : ""}>Use this camera</button>
                   <button className="btn" disabled={busy} onClick={() => setForm({ ...EMPTY, ...c, url: "" })}>Edit</button>

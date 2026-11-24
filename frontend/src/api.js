@@ -59,6 +59,8 @@ export const api = {
   updateCam: (id, body) => req(`/api/cams/${enc(id)}`, send("PUT", body)),
   deleteCam: (id) => req(`/api/cams/${enc(id)}`, { method: "DELETE" }),
   useCam: (id) => req(`/api/cams/${enc(id)}/use`, { method: "POST" }),
+  setCamMode: (multi) => req("/api/cams/mode", send("PUT", { multi })),
+  watchCam: (id, watch) => req(`/api/cams/${enc(id)}`, send("PUT", { watch })),
   alerts: (limit = 15) => req(`/api/alerts?limit=${limit}`),
   dashboard: (days = 0, from = "", to = "", camera = "") =>
     req(`/api/dashboard?days=${days}${from && to ? `&date_from=${from}&date_to=${to}` : ""}${camera ? `&camera=${enc(camera)}` : ""}`),

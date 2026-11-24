@@ -214,7 +214,7 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v20.0</span>
+        <span className="ver">v21.0</span>
       </nav>
       <main className="main">
         {!admin && <p className="note" role="status">View-only account: you can look at everything here, but not change it.</p>}

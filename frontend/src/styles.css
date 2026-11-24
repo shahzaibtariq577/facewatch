@@ -459,3 +459,10 @@ html[data-role="viewer"] .pact button:not(:first-child) { display: none; }
 .camicon { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: var(--line); color: var(--ink); }
 .cambody { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .camact { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* v21 (3E): grid mode */
+.lv-lanes { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.lv-lane { display: flex; flex-direction: column; text-align: left; font: inherit; cursor: pointer; padding: 6px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); }
+.lv-lane small { color: var(--muted); }
+.lv-lane.on { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
+.lv-lane.s-error small, .lv-lane.s-reconnecting small { color: var(--alert); }

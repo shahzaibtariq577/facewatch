@@ -1,6 +1,8 @@
 """Phase 3D: a list of cameras (name, location, type, source) and 'use this camera'.
-engine.py is not changed: choosing a camera copies its source into the normal settings
-(source_mode, cam_index, url, video_path), which the engine already reads when you press Start."""
+Choosing a camera copies its source into the normal settings (source_mode, cam_index, url, video_path),
+which the engine reads when you press Start.
+Phase 3E: each camera can be ticked 'watch'. With 'grid mode' on, the engine watches all ticked cameras
+at once (up to 4). The grid mode switch is kept in watch.json."""
 import json
 import os
 import re
@@ -11,6 +13,8 @@ from . import storage as st
 
 FILE = os.path.join(st.DATA_DIR, "cameras.json")
 MAX_CAMS = 8
+MAX_WATCH = 4
+WATCH_FILE = os.path.join(st.DATA_DIR, "watch.json")
 KINDS = ("webcam", "network", "video")
 URL_OK = re.compile(r"(rtsp|rtmp|http|https)://\S+", re.I)
 _lock = threading.RLock()
@@ -89,7 +93,7 @@ def is_active(cfg, c):
 def public(cfg, c):
     return {"id": c["id"], "name": c["name"], "location": c["location"], "kind": c["kind"],
             "index": c["index"], "path": c["path"], "has_url": bool(c["url"]),
-            "source": source_label(c), "active": is_active(cfg, c)}
+            "source": source_label(c), "active": is_active(cfg, c), "watch": bool(c.get("watch"))}
 
 
 def _source(c):
@@ -106,6 +110,9 @@ def _build(payload, items, old=None):
         base["location"] = _text(payload.get("location"), 40)
     if "kind" in payload:
         base["kind"] = str(payload.get("kind"))
+    if "watch" in payload:
+        base["watch"] = bool(payload.get("watch"))
+    base.setdefault("watch", False)
     if not base["name"]:
         raise ValueError("Give the camera a name.")
     if any(x["name"].lower() == base["name"].lower() and x["id"] != base["id"] for x in items):
@@ -151,6 +158,8 @@ def add(cfg, payload):
         if len(items) >= MAX_CAMS:
             raise ValueError(f"You can save at most {MAX_CAMS} cameras.")
         c = _build(payload, items)
+        if c["watch"] and sum(1 for x in items if x.get("watch")) >= MAX_WATCH:
+            raise ValueError(f"You can watch at most {MAX_WATCH} cameras at once.")
         items.append(c)
         _write(items)
         return c
@@ -162,6 +171,8 @@ def update(cfg, running, cid, payload):
         i = _find(items, cid)
         old = items[i]
         new = _build(payload, items, old)
+        if new["watch"] and sum(1 for x in items if x.get("watch") and x["id"] != new["id"]) >= MAX_WATCH:
+            raise ValueError(f"You can watch at most {MAX_WATCH} cameras at once.")
         was_active = is_active(cfg, old)
         if _source(new) != _source(old):
             if was_active and running:
@@ -195,6 +206,34 @@ def use(cfg, running, cid):
         _apply(cfg, c)
         return c
 
+
+
+# ------------------------------------------------------ grid mode (3E)
+def multi_on():
+    try:
+        with open(WATCH_FILE, encoding="utf-8") as f:
+            return bool(json.load(f).get("multi"))
+    except Exception:
+        return False
+
+
+def watch_list(cfg):
+    """The cameras ticked 'watch', in the saved order (at most MAX_WATCH)."""
+    return [c for c in load(cfg) if c.get("watch")][:MAX_WATCH]
+
+
+def set_multi(cfg, running, flag):
+    with _lock:
+        if running:
+            raise Conflict("Stop watching first, then change grid mode.")
+        if flag and not watch_list(cfg):
+            raise ValueError("Tick Watch on at least one camera first.")
+        st.init_dirs()
+        tmp = WATCH_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"multi": bool(flag)}, f)
+        os.replace(tmp, WATCH_FILE)
+        return bool(flag)
 
 
 # ------------------------------------------------- per-camera views (3F)
@@ -318,7 +357,12 @@ def make_router(cfg, engine):
 
     @r.get("/api/cams")
     def cams_get():
-        return {"items": [public(cfg, c) for c in load(cfg)], "running": bool(engine.running), "max": MAX_CAMS}
+        return {"items": [public(cfg, c) for c in load(cfg)], "running": bool(engine.running), "max": MAX_CAMS,
+                "multi": multi_on(), "max_watch": MAX_WATCH}
+
+    @r.put("/api/cams/mode")
+    def cams_mode(payload: dict = Body(...)):
+        return {"multi": call(set_multi, cfg, bool(engine.running), bool(payload.get("multi")))}
 
     @r.get("/api/cams/sources")
     def cams_sources():

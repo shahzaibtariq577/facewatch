@@ -47,10 +47,15 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
   const running = !!status?.running;
   const paused = running && !!status?.paused;
   const [cams, setCams] = useState([]);
-  const loadCams = () => api.cams().then((d) => setCams(d.items)).catch(() => {});
+  const [multiOn, setMultiOn] = useState(false);
+  const [focusLane, setFocusLane] = useState(-1);          // -1 = all cameras in the grid
+  const multi = running && !!status?.multi;
+  const lanes = status?.lanes || [];
+  useEffect(() => { if (!multi) setFocusLane(-1); }, [multi]);
+  const loadCams = () => api.cams().then((d) => { setCams(d.items); setMultiOn(!!d.multi); }).catch(() => {});
   useEffect(() => { loadCams(); }, [running]);
   const activeCam = cams.find((c) => c.active);
-  const camLabel = activeCam ? `${activeCam.name}${activeCam.location ? ` · ${activeCam.location}` : ""}` : status?.source || "Camera";
+  const camLabel = multi ? `${lanes.length} cameras` : activeCam ? `${activeCam.name}${activeCam.location ? ` · ${activeCam.location}` : ""}` : status?.source || "Camera";
   const chooseCamera = (id) => {
     if (!id) return;
     api.useCam(id).then(() => { loadCams(); if (onCameraUsed) onCameraUsed(); }).catch(() => loadCams());
@@ -64,8 +69,8 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
         <h2>Live</h2>
         <div className="row">
           {cams.length > 0 && (
-            <select aria-label="Camera" value={activeCam ? activeCam.id : ""} disabled={running || readOnly}
-                    title={running ? "Stop watching to change the camera" : "Choose the camera"}
+            <select aria-label="Camera" value={activeCam ? activeCam.id : ""} disabled={running || readOnly || multiOn}
+                    title={multiOn ? "Grid mode is on. Choose cameras on the Cameras page." : running ? "Stop watching to change the camera" : "Choose the camera"}
                     onChange={(e) => chooseCamera(e.target.value)}>
               {!activeCam && <option value="">Other source</option>}
               {cams.map((c) => <option key={c.id} value={c.id}>{c.name}{c.location ? ` (${c.location})` : ""}</option>)}
@@ -104,21 +109,33 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
             </div>
             <div className="lv-video">
               {running
-                ? <img key={streamKey} src={`/api/stream?k=${streamKey}`} alt="Live camera view" />
+                ? <img key={`${streamKey}-${multi ? focusLane : -1}`} src={`/api/stream?k=${streamKey}${multi && focusLane >= 0 ? `&lane=${focusLane}` : ""}`} alt="Live camera view" />
                 : <div className="lv-off"><Camera size={40} aria-hidden="true" /><p>Camera is off</p></div>}
             </div>
             {running && (
               <div className="lv-bottom">
-                <span>{paused ? "Monitoring paused" : `Monitoring active, ${status.fps.toFixed(0)} FPS`}</span>
+                <span>{paused ? "Monitoring paused" : multi ? `Monitoring ${lanes.length} cameras, ${status.fps.toFixed(0)} FPS each` : `Monitoring active, ${status.fps.toFixed(0)} FPS`}</span>
                 <span><Users size={14} aria-hidden="true" /> {status.faces} {status.faces === 1 ? "face" : "faces"} detected</span>
               </div>
             )}
           </div>
           <p className="lv-line">{d.text}</p>
+          {multi && (
+            <div className="lv-lanes" role="group" aria-label="Cameras in the grid">
+              <button className={`lv-lane ${focusLane === -1 ? "on" : ""}`} onClick={() => setFocusLane(-1)}>All cameras</button>
+              {lanes.map((l) => (
+                <button key={l.id} className={`lv-lane s-${l.state} ${focusLane === l.id ? "on" : ""}`} title={l.note || "Click to enlarge"}
+                        onClick={() => setFocusLane(focusLane === l.id ? -1 : l.id)}>
+                  {l.name}
+                  <small>{l.state === "running" ? `${l.fps.toFixed(0)} FPS · ${l.faces} ${l.faces === 1 ? "face" : "faces"}` : l.state}</small>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="lv-stats">
             <Stat icon={Gauge} label="Best similarity" value={running ? status.best.toFixed(2) : "-"} />
-            <Stat icon={Camera} label="Camera" value={activeCam ? activeCam.name : status?.source || "-"} />
+            <Stat icon={Camera} label="Camera" value={multi ? `${lanes.length} cameras` : activeCam ? activeCam.name : status?.source || "-"} />
             <Stat icon={Monitor} label="Resolution" value={running && status.resolution ? status.resolution : "-"} />
             <Stat icon={Activity} label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "-"} />
           </div>
