@@ -38,7 +38,45 @@ class StartError(Exception):
     pass
 
 
+MODEL = "arcface"      # v22: "arcface" (stronger) or "sface" (the old model). Change this word to roll back.
+
+# standard ArcFace 112x112 landmark positions: left eye, right eye, nose, left mouth, right mouth
+_ARC_TEMPLATE = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
+                          [41.5493, 92.3655], [70.7299, 92.2041]], dtype=np.float32)
+
+
+class ArcRecognizer:
+    """ArcFace MobileFaceNet (w600k_mbf) through OpenCV. Needs the 5 landmarks that YuNet gives."""
+    name = "arcface"
+
+    def __init__(self, path):
+        self.net = cv2.dnn.readNetFromONNX(path)
+
+    def embed(self, img, face_row):
+        pts = np.array(face_row[4:14], dtype=np.float32).reshape(5, 2)
+        m, _ = cv2.estimateAffinePartial2D(pts, _ARC_TEMPLATE, method=cv2.LMEDS)
+        crop = cv2.warpAffine(img, m, (112, 112), borderValue=0)
+        blob = cv2.dnn.blobFromImage(crop, 1 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
+        self.net.setInput(blob)
+        f = self.net.forward().flatten().astype(np.float32)
+        return f / (np.linalg.norm(f) + 1e-9)
+
+
+def make_recognizer():
+    """Returns (recognizer, model name). Falls back to SFace if ArcFace is not available."""
+    if MODEL == "arcface":
+        try:
+            p = st.model_path("arcface")
+            if os.path.exists(p):
+                return ArcRecognizer(p), "arcface"
+        except Exception:
+            pass
+    return cv2.FaceRecognizerSF.create(st.model_path("sface"), ""), "sface"
+
+
 def face_feature(recognizer, img, face_row):
+    if hasattr(recognizer, "embed"):
+        return recognizer.embed(img, face_row)
     aligned = recognizer.alignCrop(img, face_row)
     f = recognizer.feature(aligned).flatten()
     return f / (np.linalg.norm(f) + 1e-9)
@@ -555,7 +593,8 @@ class Engine:
     def _run(self, lane):
         try:
             detector = cv2.FaceDetectorYN.create(st.model_path("yunet"), "", (320, 320), 0.7, 0.3, 5000)
-            recognizer = cv2.FaceRecognizerSF.create(st.model_path("sface"), "")
+            recognizer, model_name = make_recognizer()
+            self.model_name = model_name
         except Exception as e:
             lane.state, lane.note = "error", f"Could not start the face models: {e}"
             return
@@ -661,16 +700,25 @@ class Engine:
                             except Exception:
                                 pass
 
-                        best_name, best_avg, best_n = None, None, 0
+                        best_name, best_avg, best_n, second = None, None, 0, None
                         for pname, dq in t["scores"].items():
                             if not dq or pname not in refs:
                                 continue
                             m = sum(dq) / len(dq)
                             if best_avg is None or m > best_avg:
+                                if best_avg is not None:
+                                    second = best_avg
                                 best_name, best_avg, best_n = pname, m, len(dq)
+                            elif second is None or m > second:
+                                second = m
 
+                        # margin rule: the best person must beat the second best (lookalike protection)
+                        arc = model_name == "arcface"          # settings are read live
+                        threshold = self.cfg.get("threshold_arc", 0.45) if arc else self.cfg["threshold"]
+                        margin = self.cfg.get("margin", 0.05) if arc else 0.0
+                        clear = second is None or best_avg is None or (best_avg - second) >= margin
                         is_match = (best_avg is not None and best_n >= MIN_FRAMES
-                                    and best_avg >= self.cfg["threshold"])
+                                    and best_avg >= threshold and clear)
                         if best_avg is not None:
                             best = max(best, best_avg)
                         if is_match:

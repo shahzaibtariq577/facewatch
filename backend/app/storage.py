@@ -28,7 +28,8 @@ FACE_PREFIX = "face_"   # close-up of the face is saved as face_<snapshot name>
 IMAGE_TYPES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 DEFAULTS = {
-    "threshold": 0.50, "alert_interval": 10, "beep": True, "snapshots": True,
+    "threshold": 0.50, "threshold_arc": 0.45, "margin": 0.05,   # v22: threshold_arc and margin are for the ArcFace model
+    "alert_interval": 10, "beep": True, "snapshots": True,
     "autostart": True, "auto_reconnect": True,
     "save_full_frame": True, "keep_days": 7,      # keep_days 0 = keep forever
     "pictures_once": True,       # only the first alert of a visit saves pictures
@@ -50,12 +51,17 @@ DEFAULTS = {
 _TYPES = {k: type(v) for k, v in DEFAULTS.items()}
 
 BASE = "https://github.com/opencv/opencv_zoo/raw/main/models/"
+ARC_ZIP = "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_s.zip"
+# key: (file name, download address, minimum size, name of the file inside a zip or None)
 MODELS = {
     "yunet": ("face_detection_yunet_2023mar.onnx",
-              BASE + "face_detection_yunet/face_detection_yunet_2023mar.onnx", 100_000),
+              BASE + "face_detection_yunet/face_detection_yunet_2023mar.onnx", 100_000, None),
     "sface": ("face_recognition_sface_2021dec.onnx",
-              BASE + "face_recognition_sface/face_recognition_sface_2021dec.onnx", 10_000_000),
+              BASE + "face_recognition_sface/face_recognition_sface_2021dec.onnx", 10_000_000, None),
+    # v22 (Phase 4B): stronger recognition model. Optional: if it cannot be downloaded the app uses SFace.
+    "arcface": ("w600k_mbf.onnx", ARC_ZIP, 10_000_000, "w600k_mbf.onnx"),
 }
+OPTIONAL_MODELS = {"arcface"}
 
 _lock = threading.Lock()
 
@@ -115,18 +121,32 @@ def model_path(key):
 
 
 def ensure_models():
-    """Download the two small ONNX models on first run (about 40 MB)."""
+    """Download the ONNX models on first run. The ArcFace model is optional."""
     init_dirs()
-    for key, (name, url, min_size) in MODELS.items():
+    for key, (name, url, min_size, member) in MODELS.items():
         path = model_path(key)
         if os.path.exists(path) and os.path.getsize(path) >= min_size:
             continue
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
-            shutil.copyfileobj(r, f)
-        if os.path.getsize(path) < min_size:
-            os.remove(path)
-            raise RuntimeError(f"Download of {name} failed (file too small).")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            if member:
+                import zipfile
+                zpath = path + ".zip"
+                with urllib.request.urlopen(req, timeout=120) as r, open(zpath, "wb") as f:
+                    shutil.copyfileobj(r, f)
+                with zipfile.ZipFile(zpath) as z, z.open(member) as src, open(path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                os.remove(zpath)
+            else:
+                with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+                    shutil.copyfileobj(r, f)
+            if os.path.getsize(path) < min_size:
+                os.remove(path)
+                raise RuntimeError(f"Download of {name} failed (file too small).")
+        except Exception:
+            if key in OPTIONAL_MODELS:
+                continue
+            raise
 
 
 # ------------------------------------------------------------------ images

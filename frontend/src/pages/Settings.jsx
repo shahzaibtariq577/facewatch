@@ -54,11 +54,23 @@ export default function Settings({ settings: s, onChange, running }) {
 
       <div className="card setgroup">
         <h3>Detection</h3>
-        <label className="range">Match strictness: <b>{s.threshold.toFixed(2)}</b>
-          <input type="range" min="0.30" max="0.75" step="0.01" value={s.threshold}
-                 onChange={(e) => onChange({ threshold: parseFloat(e.target.value) })} />
+        <label className="range">Match strictness: <b>{(s.threshold_arc ?? 0.45).toFixed(2)}</b>
+          <input type="range" min="0.30" max="0.75" step="0.01" value={s.threshold_arc ?? 0.45}
+                 onChange={(e) => onChange({ threshold_arc: parseFloat(e.target.value) })} />
         </label>
-        <p className="muted">Higher is stricter. If someone who only looks similar gets flagged, raise it. If the real person is missed, lower it.</p>
+        <p className="muted">Higher is stricter. If someone who only looks similar gets flagged, raise it. If the real person is missed, lower it. Good starting value: 0.45 to 0.50.</p>
+        <label className="range">Lookalike safety gap: <b>{(s.margin ?? 0.05).toFixed(2)}</b>
+          <input type="range" min="0" max="0.15" step="0.01" value={s.margin ?? 0.05}
+                 onChange={(e) => onChange({ margin: parseFloat(e.target.value) })} />
+        </label>
+        <p className="muted">The best match must beat the second best person by this much, or the face stays "Not recognised". Higher is safer for people who look alike. 0 turns it off.</p>
+        <details className="muted">
+          <summary>Old model setting (only used if the app falls back to SFace)</summary>
+          <label className="range">Old match strictness: <b>{s.threshold.toFixed(2)}</b>
+            <input type="range" min="0.30" max="0.75" step="0.01" value={s.threshold}
+                   onChange={(e) => onChange({ threshold: parseFloat(e.target.value) })} />
+          </label>
+        </details>
         {check("autostart", "Start watching automatically when the backend starts")}
         {check("auto_reconnect", "Reconnect automatically if the camera drops")}
       </div>
