@@ -466,3 +466,8 @@ html[data-role="viewer"] .pact button:not(:first-child) { display: none; }
 .lv-lane small { color: var(--muted); }
 .lv-lane.on { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal); }
 .lv-lane.s-error small, .lv-lane.s-reconnecting small { color: var(--alert); }
+/* v22: hide change buttons from view-only accounts (the server still refuses them anyway) */
+[data-role="viewer"] .admin-only,
+[data-role="viewer"] button.danger {
+  display: none !important;
+}

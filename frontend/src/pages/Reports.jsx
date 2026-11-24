@@ -108,7 +108,7 @@ export default function Reports({ onOpenPerson }) {
         </>
       )}
 
-      <div className="card no-print">
+      <div className="card no-print admin-only">
         <h3>Daily summary to your phone</h3>
         {!settings ? <p className="muted">Loading...</p> : (
           <>

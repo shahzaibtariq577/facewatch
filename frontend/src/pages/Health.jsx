@@ -108,6 +108,7 @@ export default function Health() {
               <tr><td>Phone alerts</td><td>{h.phone.ntfy || h.phone.telegram ? [h.phone.ntfy && "ntfy", h.phone.telegram && "Telegram"].filter(Boolean).join(" + ") : "Not set up"}</td></tr>
               <tr><td>Daily summary</td><td>{h.daily_summary.on ? `On, ${h.daily_summary.time}` : "Off"}</td></tr>
               <tr><td>Last summary sent</td><td>{h.daily_summary.last || "none yet"}</td></tr>
+              <tr><td>Face model</td><td>{h.model === "arcface" ? "ArcFace (stronger)" : h.model === "sface" ? "SFace (older)" : "n/a"}</td></tr>
               <tr><td>Python</td><td>{h.python}</td></tr>
             </tbody>
           </table>

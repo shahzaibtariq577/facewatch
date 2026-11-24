@@ -147,7 +147,7 @@ export default function People({ focus, onFocusDone }) {
         agreed to be recognised. Photos with no face are skipped, and weak photos get a warning.
       </p>
 
-      <form className="card addform" onSubmit={submit}>
+      <form className="card addform admin-only" onSubmit={submit}>
         <label>Name
           <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} />
         </label>
@@ -245,14 +245,14 @@ export default function People({ focus, onFocusDone }) {
               </p>
               <div className="pact">
                 <button className="btn" onClick={() => showHistory(p.name)}>History</button>
-                <button className="btn" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
-                <button className="btn" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
-                <button className="btn" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
+                <button className="btn admin-only" disabled={busy} onClick={() => addFor(p.name, picker)}>Add photos</button>
+                <button className="btn admin-only" disabled={busy} onClick={() => addFor(p.name, personCam)}>Take photo</button>
+                <button className="btn admin-only" disabled={busy} onClick={() => remove(p.name)}>Remove</button>
               </div>
               <div className="pact">
-                <button className="btn" disabled={busy} onClick={() => rename(p.name)}>Rename</button>
-                <button className="btn" disabled={busy} onClick={() => toggleConsent(p.name, c)}>{c && c.consent ? "Mark no consent" : "Record consent"}</button>
-                <button className="btn danger" disabled={busy} onClick={() => wipeData(p.name)}>Delete all data</button>
+                <button className="btn admin-only" disabled={busy} onClick={() => rename(p.name)}>Rename</button>
+                <button className="btn admin-only" disabled={busy} onClick={() => toggleConsent(p.name, c)}>{c && c.consent ? "Mark no consent" : "Record consent"}</button>
+                <button className="btn danger admin-only" disabled={busy} onClick={() => wipeData(p.name)}>Delete all data</button>
               </div>
             </li>
           );

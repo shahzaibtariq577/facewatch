@@ -245,7 +245,7 @@ export default function Attendance() {
         <h2>Attendance</h2>
         <div className="row no-print">
           <button className={`btn ${tab === "report" ? "primary" : ""}`} onClick={() => setTab("report")}>Report</button>
-          <button className={`btn ${tab === "setup" ? "primary" : ""}`} onClick={() => setTab("setup")}>Setup</button>
+          <button className={`btn admin-only ${tab === "setup" ? "primary" : ""}`} onClick={() => setTab("setup")}>Setup</button>
         </div>
       </div>
       {tab === "report" ? <Report /> : <Setup />}

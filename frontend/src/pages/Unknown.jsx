@@ -92,9 +92,9 @@ export default function Unknown({ onChanged }) {
                 </form>
               ) : (
                 <div className="pact">
-                  {x.face && x.status !== "added" && <button className="btn" disabled={busy} onClick={() => { setOpenId(x.id); setName(""); }}>Add as person</button>}
-                  {x.status === "new" && <button className="btn" disabled={busy} onClick={() => dismiss(x.id)}>Mark reviewed</button>}
-                  <button className="btn" disabled={busy} onClick={() => remove(x.id)}>Delete</button>
+                  {x.face && x.status !== "added" && <button className="btn admin-only" disabled={busy} onClick={() => { setOpenId(x.id); setName(""); }}>Add as person</button>}
+                  {x.status === "new" && <button className="btn admin-only" disabled={busy} onClick={() => dismiss(x.id)}>Mark reviewed</button>}
+                  <button className="btn admin-only" disabled={busy} onClick={() => remove(x.id)}>Delete</button>
                 </div>
               )}
             </li>

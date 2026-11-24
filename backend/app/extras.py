@@ -111,7 +111,8 @@ def make_router(cfg, engine):
                "state": stat.get("state"), "source": stat.get("source", ""),
                "resolution": stat.get("resolution", ""), "people": stat.get("people", 0),
                "models_ready": bool(engine.models_ready), "models_error": engine.models_error,
-               "psutil": psutil is not None, "python": platform.python_version()}
+               "psutil": psutil is not None, "python": platform.python_version(),
+               "model": stat.get("model", "")}
         out.update(_data_sizes())
         out["data_mb"] = round(sum(out[k] for k in ("people_mb", "pictures_mb", "unknown_mb", "models_mb")), 1)
         if psutil:

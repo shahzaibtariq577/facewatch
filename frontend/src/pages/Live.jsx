@@ -16,7 +16,7 @@ function describe(s, offline) {
   if (s.state === "reconnecting") return { tone: "warn", label: "Reconnecting", text: s.note || "Reconnecting to the camera..." };
   if (s.paused) return { tone: "warn", label: "Paused", text: "Monitoring is paused. No faces are checked and no alerts are sent. Press Resume to continue." };
   if (s.state === "starting") return { tone: "idle", label: "Connecting", text: "Connecting to the camera..." };
-  if (s.alert_age !== null && s.alert_age < 6 && s.last_alert) {
+  if (s.alert_age !== null && s.alert_age < 6 && s.last_alert && !s.last_alert.muted) {
     return { tone: "alert", label: `Alert: ${s.last_alert.name}`, text: `${s.last_alert.name} detected, similarity ${s.last_alert.score.toFixed(2)}` };
   }
   if (s.matched.length) return { tone: "match", label: `${s.matched.join(", ")} in view`, text: `${s.matched.join(", ")} in view` };
@@ -140,6 +140,7 @@ export default function Live({ status, offline, error, streamKey, onToggle, onPa
             <Stat icon={Activity} label="Frame rate" value={running && !paused ? `${status.fps.toFixed(0)} FPS` : "-"} />
           </div>
           {status?.note && running && <p className="meta">{status.note}</p>}
+          {running && status?.model && <p className="meta">Face model: {status.model === "arcface" ? "ArcFace (stronger)" : "SFace (older)"}</p>}
         </div>
 
         <div className="side-col">

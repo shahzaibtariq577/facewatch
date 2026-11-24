@@ -86,6 +86,29 @@ GREEN = (94, 197, 34)     # BGR colours
 AMBER = (27, 138, 201)
 
 
+ENHANCE = True         # v23: brighten dark or flat frames before finding and comparing faces (the shown picture is not changed)
+_clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+
+
+def enhance(frame):
+    """Helps weak cameras: dark or low-contrast frames get brighter and clearer. Good frames are returned as they are."""
+    if not ENHANCE:
+        return frame
+    small = frame[::4, ::4]
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    mean, spread = float(gray.mean()), float(gray.std())
+    if mean >= 85 and spread >= 35:                 # normal picture: leave it alone
+        return frame
+    out = frame
+    if mean < 75:                                   # dark picture: lift the shadows
+        gamma = max(0.5, mean / 110.0 + 0.2)
+        lut = (np.linspace(0, 1, 256) ** gamma * 255).astype(np.uint8)
+        out = cv2.LUT(out, lut)
+    lab = cv2.cvtColor(out, cv2.COLOR_BGR2LAB)
+    lab[:, :, 0] = _clahe.apply(lab[:, :, 0])       # more contrast on faces
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
 def draw_tag(frame, text, x, y, color, text_color=(0, 0, 0)):
     (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
     y0 = max(y - th - 14, 0)
@@ -380,6 +403,7 @@ class Engine:
             "unknown_seq": self.unknown_seq,
             "notif_seq": self.notif_seq,
             "notify_error": notify.last_error,
+            "model": getattr(self, "model_name", ""),
         }
 
     # ---------------------------------------------------------- stream
@@ -544,7 +568,9 @@ class Engine:
             lane.note = "Could not write match_log.csv (is it open in Excel?)"
         except Exception as e:
             lane.note = f"Could not save alert: {e}"
-        self.last_alert = {"name": name, "score": round(score, 2), "time": stamp.strftime(st.TIME_FMT)}
+        # an ignored person is still logged, but gets no banner and no beep on the Live page
+        self.last_alert = {"name": name, "score": round(score, 2), "time": stamp.strftime(st.TIME_FMT),
+                           "muted": bool(quiet.person_muted(name))}
         self.last_alert_ts = time.time()
         self.alert_seq += 1
 
@@ -662,7 +688,8 @@ class Engine:
                         self.missing &= set(refs)            # forget removed people
 
                 detector.setInputSize((w, h))
-                _, faces = detector.detect(frame)
+                look = enhance(frame)            # used for finding and comparing faces; the shown picture stays natural
+                _, faces = detector.detect(look)
                 matched, crops, best, used, n_faces = {}, {}, 0.0, set(), 0
                 unknown_new = []
                 frame_no += 1
@@ -693,7 +720,7 @@ class Engine:
 
                         if refs:
                             try:
-                                emb = face_feature(recognizer, frame, face)
+                                emb = face_feature(recognizer, look, face)
                                 for pname, embs in refs.items():
                                     dq = t["scores"].setdefault(pname, deque(maxlen=SMOOTH_FRAMES))
                                     dq.append(max(float(emb @ r) for r in embs))

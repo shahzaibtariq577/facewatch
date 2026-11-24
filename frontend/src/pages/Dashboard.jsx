@@ -141,7 +141,7 @@ export default function Dashboard({ alertSeq, onOpenPerson }) {
             </>
           )}
           <a className="btn" href="/api/alerts/export" download>Export CSV</a>
-          <button className="btn" onClick={clear}>Clear history</button>
+          <button className="btn admin-only" onClick={clear}>Clear history</button>
         </div>
       </header>
 

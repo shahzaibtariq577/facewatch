@@ -93,7 +93,7 @@ export default function App() {
     if (seqRef.current === null) { seqRef.current = seq; return; }
     if (seq !== seqRef.current) {
       seqRef.current = seq;
-      if (settingsRef.current?.beep) beep();
+      if (settingsRef.current?.beep && !status.last_alert?.muted) beep();   // no beep for an ignored person
       if (pageRef.current !== "dashboard") setUnseen((n) => n + 1);
     }
   }, [status?.alert_seq]);
@@ -214,7 +214,7 @@ export default function App() {
           <i className="lv-dot" aria-hidden="true" />
           {offline ? "Backend offline" : status?.paused ? "Paused" : status?.running ? "Watching" : "System online"}
         </span>
-        <span className="ver">v21.0</span>
+        <span className="ver">v22.0</span>
       </nav>
       <main className="main">
         {!admin && <p className="note" role="status">View-only account: you can look at everything here, but not change it.</p>}
