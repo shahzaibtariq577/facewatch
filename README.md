@@ -129,7 +129,7 @@ facewatch/
 ### 1. Clone
 
 ```bash
-git clone https://github.com/<your-username>/facewatch.git
+git clone https://github.com/shahzaibtariq577/facewatch.git
 cd facewatch
 ```
 
