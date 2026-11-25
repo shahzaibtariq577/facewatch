@@ -1,91 +1,229 @@
 # FaceWatch
 
-Real-time face watcher with a web dashboard. It watches a camera and raises alerts when it sees
-people you saved, using **faces only** (clothing and background are ignored).
+**Real-time face watcher for homes, shops and small workplaces.**
+FaceWatch uses a camera to recognise people you have saved, logs when they arrive and leave, and sends alerts to your phone. It runs on your own computer, so your photos and data stay with you.
 
-- **Backend:** Python, FastAPI, OpenCV (YuNet face detection + SFace recognition)
-- **Frontend:** React + Vite (Live, Dashboard, People, Settings)
-- **Alerts:** banner, beep, snapshot, CSV log, repeated at an interval you choose
-- **Auto:** starts by itself, remembers settings, reconnects when the camera drops
+---
 
-> **Privacy:** only use this on people who agree to it, and only with cameras you own.
-> Snapshots contain faces. Never commit the `backend/data/` folder.
+## Screenshots
 
-## Project layout
+| Live | Dashboard |
+|------|-----------|
+| ![Live](screenshots/live.png) | ![Dashboard](screenshots/dashboard.png) |
+
+| People | Not recognised |
+|--------|----------------|
+| ![People](screenshots/people.png) | ![Not recognised](screenshots/unknown.png) |
+
+| Reports | Attendance |
+|---------|------------|
+| ![Reports](screenshots/reports.png) | ![Attendance](screenshots/attendance.png) |
+
+| Cameras | Notifications |
+|---------|---------------|
+| ![Cameras](screenshots/cameras.png) | ![Notifications](screenshots/notifications.png) |
+
+| Settings | System health |
+|----------|---------------|
+| ![Settings](screenshots/settings.png) | ![System health](screenshots/health.png) |
+
+| Audit log | Users |
+|-----------|-------|
+| ![Audit log](screenshots/audit.png) | ![Users](screenshots/users.png) |
+
+| Dark mode | Phone view |
+|-----------|------------|
+| ![Dark mode](screenshots/dark.png) | ![Phone view](screenshots/mobile.png) |
+
+---
+
+## Features
+
+**Live watching**
+- Real-time face detection and recognition from a webcam, USB camera, video file or network camera (phone app, IP camera, RTSP)
+- Live page with camera picture, FPS, best match score and recent alerts
+- Grid mode: watch up to 4 cameras at once (a person seen by two cameras counts as one visit)
+- Dark and weak-light frames are brightened before matching
+
+**Recognition**
+- ArcFace (MobileFaceNet) model for matching, with SFace as an automatic fallback
+- Adjustable match strictness
+- "Lookalike safety gap": the best match must beat the second best by a set margin, or the face stays "Not recognised"
+- Faces that match nobody are saved as "Not recognised" events (never called "suspicious"). You can review them, mark them reviewed, delete them or add them as a new person
+
+**Alerts and notifications**
+- Notification centre (people, cameras, system), saved across restarts
+- Phone alerts through [ntfy](https://ntfy.sh) and optional Telegram
+- Alerts for arrival, "not seen for a while" and not recognised faces
+- "Ignore" a person for a number of hours
+
+**Dashboard, reports and attendance**
+- Dashboard with Today / 7 days / 30 days / All time / Custom date range
+- Visits per day, busiest hours, weekly trend, first-time vs repeat visits
+- Daily report (print, CSV export) and an optional end-of-day summary sent to your phone
+- Workplace attendance: departments, shifts, first in / last out, late and absent, CSV export
+- Per-camera views and filters
+
+**Security and privacy**
+- Login with two roles: **Admin** (can change everything) and **Viewer** (read only)
+- Audit log of logins, people added or removed, data deleted and settings changed
+- Consent flag per person, and "Delete all data of this person"
+- Photos and secrets are stored locally in `backend/data/`, which is not uploaded to GitHub
+
+**Other**
+- System health page (model, camera, memory)
+- Responsive design for laptop and phone, with dark mode
+
+---
+
+## Tech stack
+
+| Part | Technology |
+|------|------------|
+| Backend | Python, FastAPI, Uvicorn |
+| Face detection and recognition | OpenCV (YuNet detector, ArcFace MobileFaceNet and SFace recognisers) |
+| Frontend | React, Vite |
+| Storage | Local JSON files and image folders (no database server needed) |
+| Alerts | ntfy, Telegram |
+
+---
+
+## Project structure
 
 ```
 facewatch/
-  backend/
-    app/
-      main.py      REST API + MJPEG video stream
-      engine.py    camera loop, face matching, alerts
-      storage.py   settings, people photos, alert log, model download
-    requirements.txt
-  frontend/
-    src/           React app (App, api.js, pages/*)
-    vite.config.js
-  setup.bat        Windows one-time setup
-  run.bat          Windows start
+├── backend/
+│   ├── app/
+│   │   ├── engine.py        # camera workers, detection, matching, visits
+│   │   ├── storage.py       # people, photos, alerts, settings
+│   │   ├── main.py          # API routes
+│   │   ├── secure.py        # app entry point (run this)
+│   │   ├── auth.py          # login and sessions
+│   │   ├── users.py         # users and roles
+│   │   ├── audit.py         # audit log
+│   │   ├── cams.py          # camera management and grid mode
+│   │   ├── notify.py        # ntfy and Telegram
+│   │   ├── privacy.py       # consent and data deletion
+│   │   ├── quiet.py         # "Ignore" rules
+│   │   ├── report.py        # daily report and summary
+│   │   ├── attendance.py    # shifts and attendance
+│   │   └── extras.py        # analytics and notifications
+│   ├── data/                # created at runtime, NOT in Git
+│   ├── model_test.py        # compares SFace and ArcFace, downloads ArcFace
+│   └── requirements.txt
+├── frontend/
+│   └── src/                 # React pages and components
+├── .gitignore
+└── README.md
 ```
 
-## Quick start (Windows)
+---
 
-Needs Python 3.10+ and Node.js 18+.
+## Getting started
 
-1. Double-click `setup.bat` (once).
-2. Double-click `run.bat`. The browser opens at http://localhost:8000.
-3. Open **People**, add a name and 2 or 3 clear front-facing photos.
-4. Go to **Live** and press **Start watching**.
+### Requirements
+- Python 3.10 or newer
+- Node.js 18 or newer
+- A camera (laptop webcam is fine)
 
-The first run downloads two face models (about 40 MB) into `backend/data/models`.
-
-## Development (two terminals)
+### 1. Clone
 
 ```bash
-# terminal 1 - backend on :8000
-cd backend
-python -m venv ../.venv && ../.venv/Scripts/activate   # Linux/Mac: source ../.venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-
-# terminal 2 - frontend on :5173 (proxies /api to :8000)
-cd frontend
-npm install
-npm run dev
+git clone https://github.com/<your-username>/facewatch.git
+cd facewatch
 ```
 
-## API
+### 2. Backend
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/status` | state, FPS, faces, matches, alert counter |
-| POST | `/api/start`, `/api/stop` | start or stop watching |
-| GET | `/api/stream` | live video (MJPEG) |
-| GET / PUT | `/api/settings` | read or change settings |
-| GET | `/api/cameras` | scan webcams |
-| GET / POST | `/api/people` | list people / add a person with photos |
-| POST | `/api/people/{name}/photos` | add photos |
-| DELETE | `/api/people/{name}` | remove a person |
-| GET | `/api/people/{name}/thumb` | face thumbnail |
-| GET / DELETE | `/api/alerts` | recent alerts / clear history |
-| GET | `/api/dashboard` | totals, hourly chart, per-person stats, history |
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # Linux / macOS
 
-Interactive docs: http://localhost:8000/docs
+cd backend
+pip install -r requirements.txt
+```
 
-## Tuning
+### 3. Download the ArcFace model (once)
 
-- A lookalike (for example a brother) gets flagged: raise **Match strictness**, try 0.55, and add more photos.
-- The real person is missed: lower it, or add clearer front-facing photos.
-- Reliable range is about 3 to 4 meters from a webcam. Sunglasses, masks and side views lower the score.
+```bash
+python model_test.py
+```
+
+This downloads about 120 MB once and keeps only the small model file (`w600k_mbf.onnx`, 13 MB) in `backend/data/models/`. If the file is missing, FaceWatch falls back to SFace automatically.
+
+### 4. Frontend
+
+```bash
+cd ../frontend
+npm install
+npm run build
+```
+
+### 5. Run
+
+```bash
+cd ../backend
+python -m uvicorn app.secure:app --host 0.0.0.0 --port 8000
+```
+
+Open **http://localhost:8000** on the laptop.
+To open it on your phone (same Wi-Fi), use `http://<laptop-ip>:8000`.
+
+On the first start you create the admin login. For development you can also run `npm run dev` in `frontend/` and open http://localhost:5173 while the backend is running.
+
+---
+
+## How to use
+
+1. Go to **People**, add a person and upload 3 to 5 clear, front-facing photos (different light, with and without glasses).
+2. Go to **Live** and press **Start**.
+3. Alerts appear on Live, in Notifications and on your phone.
+4. In **Settings**, set your ntfy topic (install the free ntfy app and subscribe to the same topic), then press "Send test message".
+5. Use **Dashboard**, **Reports** and **Attendance** to review who was seen and when.
+
+### Tuning matching
+- **Match strictness** (default 0.45 for ArcFace): raise it if lookalikes get wrong names, lower it if real people are missed.
+- **Lookalike safety gap** (default 0.05): raise it for people who look alike. 0 turns it off.
+- Good photos matter more than any setting. Add more photos for anyone with low scores.
+
+---
+
+## Privacy and ethics
+
+- Everything runs locally. Nothing is sent to a cloud service except the alerts you set up (ntfy or Telegram).
+- Only save people who agree to be recognised. Each person has a consent flag, and you can delete all of a person's data at any time.
+- "Not recognised" only means the face did not match anyone saved. It does not mean the person is a stranger or that anything is wrong.
+- Face recognition can make mistakes, especially with weak cameras, bad light, side views and lookalikes. Do not use it as the only basis for a serious decision.
+- Keep your ntfy topic secret. Anyone who knows it can read your alerts.
+- Never commit `backend/data/` (it holds passwords, settings, photos and logs). It is already in `.gitignore`.
+
+---
+
+## Known limits
+
+- Tested mainly with a laptop webcam and one USB camera. Grid mode with real face models on slower laptops may reduce FPS.
+- Live grid picture supports at most 4 cameras, and non-English camera names may show as "?" in the picture.
+- The daily summary and "not seen" alerts only work while the backend is running.
+- Accuracy was checked on a small test set (2 people, 10 photos). Test with your own people and cameras.
+
+---
 
 ## Roadmap
 
-1. Visits (first seen, last seen, time present) and body tracking joined to face identity
-2. Phone alerts (Telegram, WhatsApp or email)
-3. Several cameras
-4. Windows .exe and start with Windows
-5. Number plate search
+- Stronger face detector for small or angled faces
+- Make the consent flag stop recognition of that person
+- Shifts that cross midnight in Attendance
+- Notice when only one of several cameras is down
+- Packaged `.exe` for computers without Python
+- Start with Windows and run in the background
+
+---
+
+## Author
+
+**Shahzaib Tariq**
 
 ## License
 
-MIT
+Add a license here (for example MIT) before making the repository public.
