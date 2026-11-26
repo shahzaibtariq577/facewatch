@@ -224,6 +224,7 @@ On the first start you create the admin login. For development you can also run 
 
 **Shahzaib Tariq**
 
+
 ## License
 
-Add a license here (for example MIT) before making the repository public.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
